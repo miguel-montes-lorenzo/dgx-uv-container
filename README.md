@@ -92,7 +92,7 @@ Enable **“Allow write access”** if needed.
 Map the repository to its deploy key:
 
 ```ssh
-Host github.com
+Host <custom-id-related-with-repo>  # e.g.: github.com-<repo-name>
   HostName github.com
   User git
   IdentityFile ~/.ssh/id_ed25519_<repo-name>
@@ -104,7 +104,7 @@ Set permissions and verify access:
 
 ```bash
 chmod 600 ~/.ssh/config
-ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+ssh-keyscan -H <custom-id-related-with-repo> >> ~/.ssh/known_hosts
 ssh -T git@github.com
 ```
 
