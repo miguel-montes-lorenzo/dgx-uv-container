@@ -3,10 +3,10 @@
 source variables.sh
 
 export PROJECT SERVICE CONTAINER_USER
-export HOST_VOLUME_PATH WORKDIR_DIR SSH_DIR UV_CACHE_DIR
+export HOST_VOLUME_PATH DATA_DIR SSH_DIR UV_CACHE_DIR
 
 # Ensure required directories exist
-mkdir -p "${HOST_VOLUME_PATH}/${WORKDIR_DIR}"
+mkdir -p "${HOST_VOLUME_PATH}/${DATA_DIR}"
 mkdir -p "${HOST_VOLUME_PATH}/${SSH_DIR}"
 mkdir -p "${HOST_VOLUME_PATH}/${UV_CACHE_DIR}"
 
