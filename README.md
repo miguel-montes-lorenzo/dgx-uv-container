@@ -3,6 +3,14 @@
 A Docker container for Python development on DGX systems, based on Ubuntu and preconfigured with `uv` for fast dependency management. The container is set up to persist and reuse cached dependencies via a mounted volume.
 
 
+## Auxiliar files:
+
+- **variables.sh**: configurates some container settings
+- **up.sh**: starts the compose
+- **down.sh**: stops the compose
+- **attach.sh**: opens a shell in the compose container
+
+
 ## Features
 - Ubuntu-based image suitable for DGX environments
 - `uv` preinstalled and ready to use
@@ -126,18 +134,11 @@ cd <repo-local-dir>
 git remote set-url origin "$(git remote get-url origin | sed 's/^git@github\.com:/git@github.com-<repo-name>:/')"
 ```
 
-
-
 Push the commits to the remote:
 
 ```bash
 git remote -v  # check remote direction is correctly set
 git push
 ```
-
-TODO: explain this
-git remote get-url origin
-git remote set-url
-git push
 
 > Note. Uncomment ./utils/.bashrc line [# DISPLAY_README_AT_STARTUP=false] to avoid displaying README.md at container startup.
