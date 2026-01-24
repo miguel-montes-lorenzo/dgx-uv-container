@@ -62,16 +62,16 @@ Generate a dedicated key per repository:
 
 ```bash
 ssh-keygen -t ed25519 \
-  -C "deploy-key-<repo-name>" \
-  -f ~/.ssh/id_ed25519_<repo-name> \
+  -C "deploy-key-<repo-alias>" \
+  -f ~/.ssh/id_ed25519_<repo-alias> \
   -N ""
 ```
 
 Set secure permissions:
 
 ```bash
-chmod 600 ~/.ssh/id_ed25519_<repo-name>
-chmod 644 ~/.ssh/id_ed25519_<repo-name>.pub
+chmod 600 ~/.ssh/id_ed25519_<repo-alias>
+chmod 644 ~/.ssh/id_ed25519_<repo-alias>.pub
 ```
 
 **2. Add the deploy key to GitHub**
@@ -82,7 +82,7 @@ In the GitHub repository:
 Paste the contents of:
 
 ```bash
-cat ~/.ssh/id_ed25519_<repo-name>.pub
+cat ~/.ssh/id_ed25519_<repo-alias>.pub
 ```
 
 Enable **“Allow write access”** if needed.
@@ -92,10 +92,10 @@ Enable **“Allow write access”** if needed.
 Map the repository to its deploy key:
 
 ```ssh
-Host <custom-id-related-with-repo>  # e.g.: github.com-<repo-name>
+Host <host-alias>  # e.g.: github.com-<repo-alias>
   HostName github.com
   User git
-  IdentityFile ~/.ssh/id_ed25519_<repo-name>
+  IdentityFile ~/.ssh/id_ed25519_<repo-alias>
   IdentitiesOnly yes
   StrictHostKeyChecking yes
 ```
@@ -104,8 +104,40 @@ Set permissions and verify access:
 
 ```bash
 chmod 600 ~/.ssh/config
-ssh-keyscan -H <custom-id-related-with-repo> >> ~/.ssh/known_hosts
+ssh-keyscan -H <host-alias> >> ~/.ssh/known_hosts
 ssh -T git@github.com
 ```
+
+**4. Point the repository remote to the SSH host alias**
+
+Update origin to use the host alias:
+
+```bash
+cd <repo-local-dir>
+git remote get-url origin  # this shows remote direction
+# e.g. git@github.com-dgx-uv:miguel-montes-lorenzo/dgx-uv-container.git
+git remote set-url origin <host-alias>:<owner>/<repo>.git
+```
+
+or in one line:
+
+```bash
+cd <repo-local-dir>
+git remote set-url origin "$(git remote get-url origin | sed 's/^git@github\.com:/git@github.com-<repo-name>:/')"
+```
+
+
+
+Push the commits to the remote:
+
+```bash
+git remote -v  # check remote direction is correctly set
+git push
+```
+
+TODO: explain this
+git remote get-url origin
+git remote set-url
+git push
 
 > Note. Uncomment ./utils/.bashrc line [# DISPLAY_README_AT_STARTUP=false] to avoid displaying README.md at container startup.
