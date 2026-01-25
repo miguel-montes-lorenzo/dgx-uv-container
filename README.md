@@ -26,6 +26,17 @@ Attach to a terminal session of the container:
 ```bash
 source attach.sh
 ```
+Inside the container, save inside ~/data the files to be kept persistently:
+```bash
+la .
+```
+```bash
+.bash_logout  .bashrc  .cache  .config  .local  .profile  .ssh  README.md  data
+```
+Terminate the container terminal session:
+```bash
+exit
+```
 Stop the container:
 ```bash
 source down.sh
