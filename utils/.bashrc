@@ -134,13 +134,13 @@ case "${DISPLAY_INFO_AT_STARTUP:-false}" in
   true|1|yes|on)
     echo ""
     echo "INSTALLED PYTHON INTERPRETERS:"
-    interpreters
+    "${HOME}/.local/uv-shims/interpreters"
+    echo ""
+    echo "INSTRUMENTAL STORAGE:"
+    du -hc --max-depth=0 /home/${USER}/.local/share/uv/ /mnt/workdata/uv_cache /mnt/workdata/data/
     echo ""
     echo "INSTALLED UV TOOLS:"
     uv tool list
-    echo ""
-    echo "CONTAINER STORAGE:"
-    du -hc --max-depth=0 /mnt/workdata/uv_cache ~/data/
     echo ""
     ;;
 esac

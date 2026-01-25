@@ -1,76 +1,3 @@
-# services:
-#   ubuntu:
-#     container_name: ${USER}-session
-#     build:
-#       context: .
-#       args:
-#         UID: ${HOST_UID}
-#         GID: ${HOST_GID}
-#         USERNAME: ${CONTAINER_USER}
-#     networks: [alumnos]
-
-#     volumes:
-#       - ${HOST_VOLUME_PATH}:/mnt/workdata
-
-#     environment:
-#       - UV_CACHE_DIR=/mnt/workdata/${UV_CACHE_DIR}
-#       - UV_LINK_MODE=hardlink
-#       - NVIDIA_VISIBLE_DEVICES=all
-#       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-#       - DISPLAY_INFO_AT_STARTUP=true
-
-#     user: "root"
-
-#     command: |
-#       bash -lc "
-#       set -euo pipefail
-
-#       mkdir -p /mnt/workdata/data /mnt/workdata/${UV_CACHE_DIR} /mnt/workdata/uv_share /mnt/workdata/ssh
-
-#       mkdir -p /home/${CONTAINER_USER}/.cache /home/${CONTAINER_USER}/.local/share
-
-#       ln -sfn /mnt/workdata/data /home/${CONTAINER_USER}/data
-
-#       # IMPORTANT: force cache symlink to point to the bind mount
-#       rm -rf /home/${CONTAINER_USER}/.cache/uv
-#       ln -sfn /mnt/workdata/${UV_CACHE_DIR} /home/${CONTAINER_USER}/.cache/uv
-
-#       # IMPORTANT: persist uv interpreters/state
-#       rm -rf /home/${CONTAINER_USER}/.local/share/uv
-#       ln -sfn /mnt/workdata/uv_share /home/${CONTAINER_USER}/.local/share/uv
-
-#       rm -rf /home/${CONTAINER_USER}/.ssh
-#       ln -sfn /mnt/workdata/ssh /home/${CONTAINER_USER}/.ssh
-
-#       chown -R ${HOST_UID}:${HOST_GID} /mnt/workdata || true
-#       chown -R ${HOST_UID}:${HOST_GID} /home/${CONTAINER_USER} || true
-
-#       chmod 700 /mnt/workdata/ssh
-#       chmod 600 /mnt/workdata/ssh/* 2>/dev/null || true
-
-#       sudo -H -u ${CONTAINER_USER} bash -lc '
-#         set -euo pipefail
-
-#         # use the REAL cache dir on the mount, no ambiguity
-#         export UV_CACHE_DIR=/mnt/workdata/${UV_CACHE_DIR}
-
-#         python_interpreters_to_install=(3.12 3.13 3.14)
-#         for v in \"$$\{python_interpreters_to_install[@]\}\"; do
-#           uv --no-progress python install \"$$v\"
-#         done
-#       '
-
-#       exec su -s /bin/bash ${CONTAINER_USER} -c \"sleep infinity\"
-#       "
-
-# networks:
-#   alumnos:
-#     external: true
-
-
-  
-
-
 services:
   ubuntu:
     container_name: ${USER}-session
@@ -87,8 +14,8 @@ services:
 
     environment:
       # uv should use the absolute cache dir
+      - USER=${CONTAINER_USER}
       - UV_CACHE_DIR=/home/${CONTAINER_USER}/.cache/uv
-      # - UV_CACHE_DIR=/mnt/workdata/${UV_CACHE_SUBDIR}
       - UV_LINK_MODE=hardlink
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
@@ -105,20 +32,14 @@ services:
           mkdir -p \
             /mnt/workdata/${DATA_SUBDIR} \
             /mnt/workdata/${UV_CACHE_SUBDIR} \
-            /mnt/workdata/uv_share \
             /mnt/workdata/${SSH_SUBDIR}
 
-          mkdir -p /home/${CONTAINER_USER}/.cache /home/${CONTAINER_USER}/.local/share
-
+          rm -rf /home/${CONTAINER_USER}/data
           ln -sfn /mnt/workdata/${DATA_SUBDIR} /home/${CONTAINER_USER}/data
 
+          mkdir -p /home/${CONTAINER_USER}/.cache
           rm -rf /home/${CONTAINER_USER}/.cache/uv
           ln -sfn /mnt/workdata/${UV_CACHE_SUBDIR} /home/${CONTAINER_USER}/.cache/uv
-          # mkdir -p /mnt/workdata/${UV_CACHE_SUBDIR}
-          # chown -R ${HOST_UID}:${HOST_GID} /mnt/workdata/${UV_CACHE_SUBDIR} || true
-
-          rm -rf /home/${CONTAINER_USER}/.local/share/uv
-          ln -sfn /mnt/workdata/uv_share /home/${CONTAINER_USER}/.local/share/uv
 
           rm -rf /home/${CONTAINER_USER}/.ssh
           ln -sfn /mnt/workdata/${SSH_SUBDIR} /home/${CONTAINER_USER}/.ssh
@@ -129,21 +50,7 @@ services:
           chmod 700 /mnt/workdata/${SSH_SUBDIR}
           chmod 600 /mnt/workdata/${SSH_SUBDIR}/* 2>/dev/null || true
 
-          sudo -H -u ${CONTAINER_USER} bash -lc '
-            set -euo pipefail
-
-            python_interpreters_to_install=(3.12 3.13 3.14)
-
-            for v in "$${python_interpreters_to_install[@]}"; do
-              if uv python list | grep -Eq "^$${v}([[:space:]]|$$)"; then
-                continue
-              fi
-              uv --no-progress python install "$$v"
-            done
-          '
-
           exec su -s /bin/bash ${CONTAINER_USER} -c "sleep infinity"
-
 
 networks:
   alumnos:
