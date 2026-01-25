@@ -163,5 +163,3 @@ Push the commits to the remote:
 git remote -v  # check remote direction is correctly set
 git push
 ```
-
-> Note. Uncomment ./utils/.bashrc line [# DISPLAY_README_AT_STARTUP=false] to avoid displaying README.md at container startup.
