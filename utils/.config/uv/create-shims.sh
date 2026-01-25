@@ -164,83 +164,86 @@ chmod +x "$UVSHIM/version"
 # venv (function): create/activate venv
 # -------------------------
 venv() {
-  set -euo pipefail
+    # Keep strict mode for scripts if you want, but avoid breaking interactive shells.
+    local _is_interactive="0"
+    case "$-" in *i*) _is_interactive="1" ;; esac
 
-  # Avoid nesting
-  if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-    printf '[venv] Already inside a virtual environment: %s\n' "${VIRTUAL_ENV}" >&2
-    return 0
-  fi
-
-  local py=""
-  local act=".venv"
-
-  # Parse args
-  while [[ $# -gt 0 ]]; do
-    case "${1-}" in
-      -p|--python)
-        shift || true
-        [[ $# -gt 0 ]] || { printf '[ERROR] missing value for --python\n' >&2; return 1; }
-        py="${1-}"
-        shift || true
-        ;;
-      --)
-        shift || true
-        break
-        ;;
-      -*)
-        printf '[ERROR] unknown option: %s\n' "${1-}" >&2
-        return 1
-        ;;
-      *)
-        act="${1-}"
-        shift || true
-        break
-        ;;
-    esac
-  done
-
-  # Remaining args → uv
-  # shellcheck disable=SC2124
-  local uv_extra_args="$*"
-
-  local activate_path="${act}/bin/activate"
-
-  # Create venv if missing
-  if [[ ! -f "${activate_path}" ]]; then
-    if [[ -n "${py}" ]]; then
-      if [[ -n "${uv_extra_args}" ]]; then
-        eval "uv --no-progress venv --python \"${py}\" ${uv_extra_args} \"${act}\""
-      else
-        uv --no-progress venv --python "${py}" "${act}"
-      fi
-    else
-      if [[ -n "${uv_extra_args}" ]]; then
-        eval "uv --no-progress venv ${uv_extra_args} \"${act}\""
-      else
-        uv --no-progress venv "${act}"
-      fi
+    # Save current shell options and restore on return.
+    local _old_opts=""
+    _old_opts="$(set +o)"
+    if [[ "${_is_interactive}" == "0" ]]; then
+        set -euo pipefail
     fi
-  fi
 
-  [[ -f "${activate_path}" ]] || {
-    printf '[ERROR] expected %s not found\n' "${activate_path}" >&2
-    return 1
-  }
+    if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+        printf '[venv] Already inside a virtual environment: %s\n' \
+            "${VIRTUAL_ENV}" 1>&2
+        eval "${_old_opts}"
+        return 0
+    fi
 
-  # Load rc first (matches old behavior)
-  if [[ -n "${BASH_VERSION:-}" ]]; then
-    [[ -f "${HOME}/.bashrc" ]] && source "${HOME}/.bashrc"
-  elif [[ -n "${ZSH_VERSION:-}" ]]; then
-    local zdot="${ZDOTDIR:-${HOME}}"
-    [[ -f "${zdot}/.zshrc" ]] && source "${zdot}/.zshrc"
-  fi
+    local py=""
+    local act=".venv"
 
-  # Activate
-  # shellcheck disable=SC1090
-  source "${activate_path}"
+    while [[ $# -gt 0 ]]; do
+        case "${1-}" in
+            -p|--python)
+                shift || true
+                if [[ $# -le 0 ]]; then
+                    printf '[ERROR] missing value for --python\n' 1>&2
+                    eval "${_old_opts}"
+                    return 1
+                fi
+                py="${1-}"
+                shift || true
+                ;;
+            --)
+                shift || true
+                break
+                ;;
+            -*)
+                printf '[ERROR] unknown option: %s\n' "${1-}" 1>&2
+                eval "${_old_opts}"
+                return 1
+                ;;
+            *)
+                act="${1-}"
+                shift || true
+                break
+                ;;
+        esac
+    done
+
+    local -a extra_args=()
+    while [[ $# -gt 0 ]]; do
+        extra_args+=("$1")
+        shift || true
+    done
+
+    local activate_path="${act}/bin/activate"
+
+    if [[ ! -f "${activate_path}" ]]; then
+        local -a cmd=(uv --no-progress venv)
+        if [[ -n "${py}" ]]; then
+            cmd+=(--python "${py}")
+        fi
+        cmd+=("${extra_args[@]}" "${act}")
+        "${cmd[@]}"
+    fi
+
+    if [[ ! -f "${activate_path}" ]]; then
+        printf '[ERROR] expected %s not found\n' "${activate_path}" 1>&2
+        eval "${_old_opts}"
+        return 1
+    fi
+
+    # No re-sourcing ~/.bashrc here; keep side effects out.
+    # Activation must run in current shell:
+    # shellcheck disable=SC1090
+    source "${activate_path}"
+
+    eval "${_old_opts}"
 }
-
 
 
 
@@ -483,6 +486,229 @@ for i in "${KEYS[@]}"; do
 done
 EOF
 chmod +x "$UVSHIM/interpreters"
+
+
+
+
+
+
+
+
+# -------------------------
+# prune (shim): prune uv cache using hardlink GC + venv-installed wheels keep
+# -------------------------
+cat > "$UVSHIM/prune" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${UV_CACHE_DIR:=$HOME/.cache/uv}"
+
+DEBUG=0  # set to 1 to activate logs
+log() {
+  if (( DEBUG )); then
+    printf '[uv-cache-gc] %s\n' "$*" >&2
+  fi
+  return 0
+}
+
+normalize_project_name() {
+  local name="$1"
+  name="${name,,}"
+  name="${name//_/-}"
+  name="${name//./-}"
+  name="${name//+/-}"
+  printf '%s' "$name"
+}
+
+has_linked_files() {
+  local dir="$1"
+  find "$dir" -type f -print0 \
+    | xargs -0 -r stat -c '%h' -- 2>/dev/null \
+    | awk '$1 > 1 { found=1; exit } END { exit !found }'
+}
+
+extract_names_from_archive_object() {
+  # Print normalized dist names found in *.dist-info/METADATA under obj_dir
+  local obj_dir="$1"
+
+  # Correct: match paths like ".../<something>.dist-info/METADATA"
+  mapfile -d '' -t metadata_files < <(
+    find "$obj_dir" -type f -name METADATA -print0 2>/dev/null \
+      | tr '\0' '\n' \
+      | awk '$0 ~ /\.dist-info\/METADATA$/ { print }' \
+      | tr '\n' '\0'
+  )
+
+  log "  METADATA files found: ${#metadata_files[@]} (under $obj_dir)"
+  if (( ${#metadata_files[@]} > 0 )); then
+    local show_n=5
+    if (( ${#metadata_files[@]} < show_n )); then
+      show_n="${#metadata_files[@]}"
+    fi
+    for ((i = 0; i < show_n; i++)); do
+      log "    METADATA: ${metadata_files[$i]}"
+    done
+  fi
+
+  local metadata_path=""
+  for metadata_path in "${metadata_files[@]}"; do
+    local dist_name=""
+    dist_name="$(
+      awk -F': *' 'tolower($1)=="name" { print $2; exit }' "$metadata_path" \
+        || true
+    )"
+
+    if [[ -z "$dist_name" ]]; then
+      log "    WARN: could not parse Name: from $metadata_path"
+      continue
+    fi
+
+    local norm=""
+    norm="$(normalize_project_name "$dist_name")"
+    log "    Parsed Name: '$dist_name' -> keep key: '$norm'"
+    printf '%s\n' "$norm"
+  done
+}
+
+if [[ ! -d "$UV_CACHE_DIR" ]]; then
+  echo "UV cache directory does not exist: $UV_CACHE_DIR" >&2
+  exit 1
+fi
+
+log "UV_CACHE_DIR=$UV_CACHE_DIR"
+
+mapfile -d '' -t archive_roots < <(find "$UV_CACHE_DIR" -type d -name '*archive*' -print0)
+log "Found archive roots: ${#archive_roots[@]}"
+for r in "${archive_roots[@]}"; do
+  log "  archive_root: $r"
+done
+
+mapfile -d '' -t wheels_roots < <(find "$UV_CACHE_DIR" -type d -name '*wheels*' -print0)
+log "Found wheels roots: ${#wheels_roots[@]}"
+for r in "${wheels_roots[@]}"; do
+  log "  wheels_root: $r"
+done
+
+# -----------------------------------------------------------------------------
+# 1) Prune archive objects that have ONLY single-linked files (nlink == 1)
+#    Then remove the archive root itself if it becomes empty.
+# -----------------------------------------------------------------------------
+for archive_root in "${archive_roots[@]}"; do
+  mapfile -d '' -t obj_dirs < <(
+    find "$archive_root" -mindepth 1 -maxdepth 1 -type d -print0
+  )
+  log "Scanning archive root: $archive_root (objects=${#obj_dirs[@]})"
+
+  for obj_dir in "${obj_dirs[@]}"; do
+    if has_linked_files "$obj_dir"; then
+      log "KEEP archive object (has linked files): $obj_dir"
+      continue
+    fi
+
+    log "DELETE archive object (all nlink==1): $obj_dir"
+    rm -rf -- "$obj_dir"
+  done
+
+  if [[ -d "$archive_root" ]] && [[ -z "$(ls -A "$archive_root" 2>/dev/null)" ]]; then
+    log "DELETE empty archive root: $archive_root"
+    rmdir -- "$archive_root" 2>/dev/null || true
+  fi
+done
+
+# -----------------------------------------------------------------------------
+# 2) Build keep-list from installed packages in *existing venvs* (site-packages)
+# -----------------------------------------------------------------------------
+keep_projects_file="$(mktemp)"
+trap 'rm -f -- "$keep_projects_file"' EXIT
+
+scan_roots=(
+  "$PWD"
+  "$HOME/data"
+  "/mnt/workdata/data"
+)
+
+log "Scanning for installed packages in venvs under:"
+for root in "${scan_roots[@]}"; do
+  log "  scan_root: $root"
+done
+
+metadata_count=0
+name_count=0
+
+for root in "${scan_roots[@]}"; do
+  [[ -d "$root" ]] || continue
+
+  while IFS= read -r -d '' metadata_path; do
+    metadata_count=$((metadata_count + 1))
+
+    dist_name="$(
+      awk -F': *' 'tolower($1)=="name" { print $2; exit }' "$metadata_path" \
+        || true
+    )"
+
+    if [[ -z "$dist_name" ]]; then
+      log "  WARN: could not parse Name: from $metadata_path"
+      continue
+    fi
+
+    norm="$(normalize_project_name "$dist_name")"
+    printf '%s\n' "$norm" >>"$keep_projects_file"
+    name_count=$((name_count + 1))
+  done < <(
+    find "$root" -type f \
+      -path '*/.venv/lib/python*/site-packages/*.dist-info/METADATA' \
+      -print0 2>/dev/null
+  )
+done
+
+if [[ -s "$keep_projects_file" ]]; then
+  sort -u "$keep_projects_file" -o "$keep_projects_file"
+fi
+
+log "Venv METADATA files seen: $metadata_count"
+log "Names extracted (pre-dedupe): $name_count"
+log "Keep-list (deduped):"
+if [[ -s "$keep_projects_file" ]]; then
+  while IFS= read -r name; do
+    log "  keep: $name"
+  done <"$keep_projects_file"
+else
+  log "  (empty)"
+fi
+
+# -----------------------------------------------------------------------------
+# 3) Under any "*wheels*"/pypi/, keep ONLY wheels for keep-list names
+# -----------------------------------------------------------------------------
+for wheels_root in "${wheels_roots[@]}"; do
+  pypi_root="$wheels_root/pypi"
+  if [[ ! -d "$pypi_root" ]]; then
+    log "Skip wheels root without pypi/: $wheels_root"
+    continue
+  fi
+
+  mapfile -d '' -t proj_dirs < <(
+    find "$pypi_root" -mindepth 1 -maxdepth 1 -type d -print0
+  )
+  log "Scanning wheels pypi root: $pypi_root (projects=${#proj_dirs[@]})"
+
+  for proj_dir in "${proj_dirs[@]}"; do
+    proj_name="$(basename -- "$proj_dir")"
+
+    if [[ -s "$keep_projects_file" ]] && grep -Fxq -- "$proj_name" "$keep_projects_file"; then
+      log "KEEP wheels project dir: $proj_dir"
+      continue
+    fi
+
+    log "DELETE wheels project dir: $proj_dir"
+    rm -rf -- "$proj_dir"
+  done
+done
+
+log "Done."
+EOF
+chmod +x "$UVSHIM/prune"
+
+
 
 # -------------------------
 # Ensure PATH contains ~/.local/uv-shims

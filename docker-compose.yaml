@@ -15,7 +15,7 @@ services:
     environment:
       # uv should use the absolute cache dir
       - USER=${CONTAINER_USER}
-      - UV_CACHE_DIR=/home/${CONTAINER_USER}/.cache/uv
+      - UV_CACHE_DIR=/mnt/workdata/${UV_CACHE_SUBDIR}
       - UV_LINK_MODE=hardlink
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
@@ -39,7 +39,7 @@ services:
 
           mkdir -p /home/${CONTAINER_USER}/.cache
           rm -rf /home/${CONTAINER_USER}/.cache/uv
-          ln -sfn /mnt/workdata/${UV_CACHE_SUBDIR} /home/${CONTAINER_USER}/.cache/uv
+          # ln -sfn /mnt/workdata/${UV_CACHE_SUBDIR} /home/${CONTAINER_USER}/.cache/uv
 
           rm -rf /home/${CONTAINER_USER}/.ssh
           ln -sfn /mnt/workdata/${SSH_SUBDIR} /home/${CONTAINER_USER}/.ssh

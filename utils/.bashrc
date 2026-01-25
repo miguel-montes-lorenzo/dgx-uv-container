@@ -2,10 +2,14 @@
 # see /usr/share/doc/bash/examples/startup-files (in the package bash-doc)
 # for examples
 
-# If not running interactively, don't do anything
-case $- in
-    *i*) ;;
-      *) return;;
+# # If not running interactively, don't do anything
+# case $- in
+#     *i*) ;;
+#       *) return;;
+# esac
+# Disable strict-mode in interactive shells (prevents random prompt-hook exits).
+case "$-" in
+  *i*) set +e; set +u ;;
 esac
 
 # don't put duplicate lines or lines starting with space in the history.
@@ -118,6 +122,7 @@ if ! shopt -oq posix; then
 fi
 
 # remove unused dependencies from the uv cache
+"${HOME}/.local/uv-shims/prune"
 if command -v uv >/dev/null 2>&1; then
   mkdir -p -- "${UV_CACHE_DIR:-$HOME/.cache/uv}" 2>/dev/null || true
   uv cache prune >/dev/null 2>&1 || echo "uv cache prune failed" >&2
@@ -126,7 +131,7 @@ fi
 ### CUSTOM
 alias py="python"
 alias cls="clear"
-alias storage="du -hc --max-depth=0 /mnt/workdata/uv_cache ~/data/"
+alias storage="du -hc --max-depth=0 /home/${USER}/.local/share/uv/python /home/${USER}/.local/share/uv/tools /mnt/workdata/uv_cache /mnt/workdata/data/"
 
 # uncomment this to avoid displaying README.md at start up
 # DISPLAY_INFO_AT_STARTUP=false
@@ -136,8 +141,8 @@ case "${DISPLAY_INFO_AT_STARTUP:-false}" in
     echo "INSTALLED PYTHON INTERPRETERS:"
     "${HOME}/.local/uv-shims/interpreters"
     echo ""
-    echo "INSTRUMENTAL STORAGE:"
-    du -hc --max-depth=0 /home/${USER}/.local/share/uv/ /mnt/workdata/uv_cache /mnt/workdata/data/
+    echo "EFFECTIVE STORAGE:"
+    storage
     echo ""
     echo "INSTALLED UV TOOLS:"
     uv tool list

@@ -3,12 +3,33 @@
 A Docker container for Python development on DGX systems, based on Ubuntu and preconfigured with `uv` for fast dependency management. The container is set up to persist and reuse cached dependencies via a mounted volume.
 
 
-## Auxiliar files:
+## User guide:
 
-- **variables.sh**: configurates some container settings
-- **up.sh**: starts the compose
-- **down.sh**: stops the compose
-- **attach.sh**: opens a shell in the compose container
+**Files**
+
+- **README.md**: contains guidelines on the container’s features and usage
+- **Dockerfile**: Dockerfile for the container image
+- **docker-compose.yaml**: Docker Compose file
+- **utils**: contains files and directories to be copied into the container
+- **variables.sh**: contains the configuration for some container settings
+- **up.sh**: starts the Compose setup
+- **down.sh**: stops the Compose setup
+- **attach.sh**: opens a shell in the Compose container
+
+**Usage**
+
+Start the compose (single container named: "${USER}-session"):
+```bash
+source up.sh
+```
+Attach to a terminal session of the container:
+```bash
+source attach.sh
+```
+Stop the container:
+```bash
+source down.sh
+```
 
 
 ## Features
@@ -59,6 +80,7 @@ These variables define the container’s user, persistence layout, and session i
 - **lpin** <python interpreter path / python version>: pins Python interpreter locally
 - **lpin** none: unpins locally pinned Python interpreter
 - **interpreters**: shows all installed Python interpreters (marks with (*) uv python selected one)
+- **prune**: cleans from the uv cache python dependencies unreferenced by uv-manged environments
 
 
 ## How to manage ssh Git credentials
