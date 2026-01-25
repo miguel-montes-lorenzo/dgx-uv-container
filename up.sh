@@ -3,15 +3,15 @@
 source variables.sh
 
 export PROJECT SERVICE CONTAINER_USER
-export HOST_VOLUME_PATH DATA_DIR SSH_DIR UV_CACHE_DIR
+export HOST_VOLUME_PATH DATA_SUBDIR SSH_SUBDIR UV_CACHE_SUBDIR
 
 # Ensure required directories exist
-mkdir -p "${HOST_VOLUME_PATH}/${DATA_DIR}"
-mkdir -p "${HOST_VOLUME_PATH}/${SSH_DIR}"
-mkdir -p "${HOST_VOLUME_PATH}/${UV_CACHE_DIR}"
+mkdir -p "${HOST_VOLUME_PATH}/${DATA_SUBDIR}"
+mkdir -p "${HOST_VOLUME_PATH}/${SSH_SUBDIR}"
+mkdir -p "${HOST_VOLUME_PATH}/${UV_CACHE_SUBDIR}"
 
 # (Optional but recommended) sane permissions for SSH dir
-chmod 700 "${HOST_VOLUME_PATH}/${SSH_DIR}" || true
+chmod 700 "${HOST_VOLUME_PATH}/${SSH_SUBDIR}" || true
 
 export HOST_UID="$(id -u)"
 export HOST_GID="$(id -g)"

@@ -119,24 +119,29 @@ fi
 
 # remove unused dependencies from the uv cache
 if command -v uv >/dev/null 2>&1; then
-  if ! uv cache clean >/dev/null 2>&1; then
-    echo "uv cache clean failed" >&2
-    exit 1
-  fi
+  mkdir -p -- "${UV_CACHE_DIR:-$HOME/.cache/uv}" 2>/dev/null || true
+  uv cache prune >/dev/null 2>&1 || echo "uv cache prune failed" >&2
 fi
 
 ### CUSTOM
 alias py="python"
 alias cls="clear"
+alias storage="du -hc --max-depth=0 /mnt/workdata/uv_cache ~/data/"
 
 # uncomment this to avoid displaying README.md at start up
-# DISPLAY_README_AT_STARTUP=false
-case "${DISPLAY_README_AT_STARTUP:-false}" in
+# DISPLAY_INFO_AT_STARTUP=false
+case "${DISPLAY_INFO_AT_STARTUP:-false}" in
   true|1|yes|on)
     echo ""
-    cat "$HOME/README.md"
+    echo "INSTALLED PYTHON INTERPRETERS:"
+    interpreters
     echo ""
+    echo "INSTALLED UV TOOLS:"
+    uv tool list
+    echo ""
+    echo "CONTAINER STORAGE:"
+    du -hc --max-depth=0 /mnt/workdata/uv_cache ~/data/
     echo ""
     ;;
 esac
-DISPLAY_README_AT_STARTUP=false
+DISPLAY_INFO_AT_STARTUP=false

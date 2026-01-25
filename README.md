@@ -15,6 +15,7 @@ A Docker container for Python development on DGX systems, based on Ubuntu and pr
 - Ubuntu-based image suitable for DGX environments
 - `uv` preinstalled and ready to use
 - Persistent `uv` cache via volume mounting to speed up repeated builds
+- Automatic `uv` cache pruning at startup to remove unused dependencies without requiring user intervention
 - Custom shims to simplify `uv` usage and environment management
 - Persistent working directory mounted at ~/data
 - Persistent ~/.ssh directory for SSH configuration and keys, useful for repository-specific deploy keys and seamless Git access

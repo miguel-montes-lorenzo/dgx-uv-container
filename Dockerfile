@@ -56,6 +56,18 @@ ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
 # Compose can override; keep a default
 ENV UV_CACHE_DIR="/home/${USERNAME}/.cache/uv"
 
+# This installs uv
 RUN bash "/home/${USERNAME}/.config/uv/install.sh"
+
+# Ensure uv is visible in non-interactive RUN steps
+ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
+ENV UV_TOOL_BIN_DIR="/home/${USERNAME}/.local/bin"
+
+# Install ruff as a uv-managed tool
+RUN uv tool install ruff --force
+RUN uv tool install ty --force
+RUN uv tool install pytest --force
+RUN uv tool install coverage --force
+RUN uv tool install "dvc[ssh,s3,gcs,azure]" --force
 
 CMD ["bash", "-lc", "sleep infinity"]
