@@ -160,15 +160,121 @@ chmod +x "$UVSHIM/version"
 
 
 
+
+# # -------------------------
+# # venv (function): create/activate venv
+# # -------------------------
+# venv() {
+#     local _is_interactive="0"
+#     case "$-" in *i*) _is_interactive="1" ;; esac
+
+#     local _old_opts=""
+#     _old_opts="$(set +o)"
+#     if [[ "${_is_interactive}" == "0" ]]; then
+#         set -euo pipefail
+#     fi
+
+#     if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+#         printf '[venv] Already inside a virtual environment: %s\n' \
+#             "${VIRTUAL_ENV}" 1>&2
+#         eval "${_old_opts}"
+#         return 0
+#     fi
+
+#     local py=""
+#     local act=".venv"
+
+#     while [[ $# -gt 0 ]]; do
+#         case "${1-}" in
+#             -p|--python)
+#                 shift || true
+#                 if [[ $# -le 0 ]]; then
+#                     printf '[ERROR] missing value for --python\n' 1>&2
+#                     eval "${_old_opts}"
+#                     return 1
+#                 fi
+#                 py="${1-}"
+#                 shift || true
+#                 ;;
+#             --)
+#                 shift || true
+#                 break
+#                 ;;
+#             -*)
+#                 printf '[ERROR] unknown option: %s\n' "${1-}" 1>&2
+#                 eval "${_old_opts}"
+#                 return 1
+#                 ;;
+#             *)
+#                 act="${1-}"
+#                 shift || true
+#                 break
+#                 ;;
+#         esac
+#     done
+
+#     local -a extra_args=()
+#     while [[ $# -gt 0 ]]; do
+#         extra_args+=("$1")
+#         shift || true
+#     done
+
+#     local activate_path="${act}/bin/activate"
+#     local created="0"
+
+#     if [[ ! -f "${activate_path}" ]]; then
+#         created="1"
+#         local -a cmd=(uv --no-progress venv)
+#         if [[ -n "${py}" ]]; then
+#             cmd+=(--python "${py}")
+#         fi
+#         cmd+=("${extra_args[@]}" "${act}")
+
+#         # Filter uv output: keep only the first two lines
+#         "${cmd[@]}" 2>&1 | sed '/^Activate with:/d'
+#     fi
+
+#     if [[ ! -f "${activate_path}" ]]; then
+#         printf '[ERROR] expected %s not found\n' "${activate_path}" 1>&2
+#         eval "${_old_opts}"
+#         return 1
+#     fi
+
+#     # Activate in the current shell
+#     # shellcheck disable=SC1090
+#     source "${activate_path}"
+
+#     # ---- PROMPT FIX (matches `uv venv`) ----
+#     local dir_name=""
+#     dir_name="$(basename "$(pwd)")"
+
+#     export VIRTUAL_ENV_PROMPT="(${dir_name}) "
+
+#     if [[ -n "${_OLD_VIRTUAL_PS1:-}" ]]; then
+#         PS1="${VIRTUAL_ENV_PROMPT}${_OLD_VIRTUAL_PS1}"
+#     else
+#         PS1="${VIRTUAL_ENV_PROMPT}${PS1}"
+#     fi
+#     # ---------------------------------------
+
+#     eval "${_old_opts}"
+# }
+
+
+
+
+
+
+
+
+
 # -------------------------
 # venv (function): create/activate venv
 # -------------------------
 venv() {
-    # Keep strict mode for scripts if you want, but avoid breaking interactive shells.
     local _is_interactive="0"
     case "$-" in *i*) _is_interactive="1" ;; esac
 
-    # Save current shell options and restore on return.
     local _old_opts=""
     _old_opts="$(set +o)"
     if [[ "${_is_interactive}" == "0" ]]; then
@@ -227,8 +333,19 @@ venv() {
         if [[ -n "${py}" ]]; then
             cmd+=(--python "${py}")
         fi
-        cmd+=("${extra_args[@]}" "${act}")
-        "${cmd[@]}"
+
+        # Use absolute path only for creation output
+        local act_abs=""
+        if [[ "${act}" = /* ]]; then
+            act_abs="${act}"
+        else
+            act_abs="$(pwd)/${act}"
+        fi
+
+        cmd+=("${extra_args[@]}" "${act_abs}")
+
+        # Filter uv output: drop "Activate with" line
+        "${cmd[@]}" 2>&1 | sed '/^Activate with:/d'
     fi
 
     if [[ ! -f "${activate_path}" ]]; then
@@ -237,13 +354,27 @@ venv() {
         return 1
     fi
 
-    # No re-sourcing ~/.bashrc here; keep side effects out.
-    # Activation must run in current shell:
+    # Activate in the current shell
     # shellcheck disable=SC1090
     source "${activate_path}"
 
+    # ---- PROMPT FIX (matches `uv venv`) ----
+    local dir_name=""
+    dir_name="$(basename "$(pwd)")"
+
+    export VIRTUAL_ENV_PROMPT="(${dir_name}) "
+
+    if [[ -n "${_OLD_VIRTUAL_PS1:-}" ]]; then
+        PS1="${VIRTUAL_ENV_PROMPT}${_OLD_VIRTUAL_PS1}"
+    else
+        PS1="${VIRTUAL_ENV_PROMPT}${PS1}"
+    fi
+    # ---------------------------------------
+
     eval "${_old_opts}"
 }
+
+
 
 
 
