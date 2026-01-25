@@ -37,7 +37,7 @@ Terminate the container terminal session:
 ```bash
 exit
 ```
-Stop the container:
+Stop the compose and remove the container:
 ```bash
 source down.sh
 ```
