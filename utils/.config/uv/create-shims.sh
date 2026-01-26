@@ -57,24 +57,19 @@ _tmo2() { [[ -n "$TIMEOUT_BIN" ]] && "$TIMEOUT_BIN" 2s "$@" || "$@"; }
 # -------------------------
 # python (via uv run; resolves stable interpreter)
 # -------------------------
-cat > "$UVSHIM/_python" << 'EOF'
+cat > "$UVSHIM/python" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 PY="$(uv run python -c 'import sys; print(sys.executable)')"
 exec uv run --python "$PY" python "$@"
 EOF
-chmod +x "$UVSHIM/_python"
-
-cat > "$UVSHIM/python" << 'EOF'
-#!/usr/bin/env bash
-exec "$HOME/.local/uv-shims/_python" "$@"
-EOF
 chmod +x "$UVSHIM/python"
+
 
 # -------------------------
 # pip (maps to uv pip; accepts -p/--python)
 # -------------------------
-cat > "$UVSHIM/_pip" << 'EOF'
+cat > "$UVSHIM/pip" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 ARGS=(); PY=""
@@ -90,13 +85,9 @@ if [[ -z "$PY" ]]; then
 fi
 exec uv pip --no-progress "${ARGS[@]}" --python "$PY"
 EOF
-chmod +x "$UVSHIM/_pip"
-
-cat > "$UVSHIM/pip" << 'EOF'
-#!/usr/bin/env bash
-exec "$HOME/.local/uv-shims/_pip" "$@"
-EOF
 chmod +x "$UVSHIM/pip"
+
+
 
 # -------------------------
 # version (two lines; matches uv resolver or active venv)
@@ -156,111 +147,6 @@ fi
 echo "Python (none)"
 EOF
 chmod +x "$UVSHIM/version"
-
-
-
-
-
-# # -------------------------
-# # venv (function): create/activate venv
-# # -------------------------
-# venv() {
-#     local _is_interactive="0"
-#     case "$-" in *i*) _is_interactive="1" ;; esac
-
-#     local _old_opts=""
-#     _old_opts="$(set +o)"
-#     if [[ "${_is_interactive}" == "0" ]]; then
-#         set -euo pipefail
-#     fi
-
-#     if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-#         printf '[venv] Already inside a virtual environment: %s\n' \
-#             "${VIRTUAL_ENV}" 1>&2
-#         eval "${_old_opts}"
-#         return 0
-#     fi
-
-#     local py=""
-#     local act=".venv"
-
-#     while [[ $# -gt 0 ]]; do
-#         case "${1-}" in
-#             -p|--python)
-#                 shift || true
-#                 if [[ $# -le 0 ]]; then
-#                     printf '[ERROR] missing value for --python\n' 1>&2
-#                     eval "${_old_opts}"
-#                     return 1
-#                 fi
-#                 py="${1-}"
-#                 shift || true
-#                 ;;
-#             --)
-#                 shift || true
-#                 break
-#                 ;;
-#             -*)
-#                 printf '[ERROR] unknown option: %s\n' "${1-}" 1>&2
-#                 eval "${_old_opts}"
-#                 return 1
-#                 ;;
-#             *)
-#                 act="${1-}"
-#                 shift || true
-#                 break
-#                 ;;
-#         esac
-#     done
-
-#     local -a extra_args=()
-#     while [[ $# -gt 0 ]]; do
-#         extra_args+=("$1")
-#         shift || true
-#     done
-
-#     local activate_path="${act}/bin/activate"
-#     local created="0"
-
-#     if [[ ! -f "${activate_path}" ]]; then
-#         created="1"
-#         local -a cmd=(uv --no-progress venv)
-#         if [[ -n "${py}" ]]; then
-#             cmd+=(--python "${py}")
-#         fi
-#         cmd+=("${extra_args[@]}" "${act}")
-
-#         # Filter uv output: keep only the first two lines
-#         "${cmd[@]}" 2>&1 | sed '/^Activate with:/d'
-#     fi
-
-#     if [[ ! -f "${activate_path}" ]]; then
-#         printf '[ERROR] expected %s not found\n' "${activate_path}" 1>&2
-#         eval "${_old_opts}"
-#         return 1
-#     fi
-
-#     # Activate in the current shell
-#     # shellcheck disable=SC1090
-#     source "${activate_path}"
-
-#     # ---- PROMPT FIX (matches `uv venv`) ----
-#     local dir_name=""
-#     dir_name="$(basename "$(pwd)")"
-
-#     export VIRTUAL_ENV_PROMPT="(${dir_name}) "
-
-#     if [[ -n "${_OLD_VIRTUAL_PS1:-}" ]]; then
-#         PS1="${VIRTUAL_ENV_PROMPT}${_OLD_VIRTUAL_PS1}"
-#     else
-#         PS1="${VIRTUAL_ENV_PROMPT}${PS1}"
-#     fi
-#     # ---------------------------------------
-
-#     eval "${_old_opts}"
-# }
-
-
 
 
 
@@ -653,7 +539,7 @@ normalize_project_name() {
 
 has_linked_files() {
   local dir="$1"
-  find "$dir" -type f -print0 \
+  find "$dir" -type f -print0 2>/dev/null \
     | xargs -0 -r stat -c '%h' -- 2>/dev/null \
     | awk '$1 > 1 { found=1; exit } END { exit !found }'
 }
@@ -708,13 +594,13 @@ fi
 
 log "UV_CACHE_DIR=$UV_CACHE_DIR"
 
-mapfile -d '' -t archive_roots < <(find "$UV_CACHE_DIR" -type d -name '*archive*' -print0)
+mapfile -d '' -t archive_roots < <(find "$UV_CACHE_DIR" -type d -name '*archive*' -print0 2>/dev/null)
 log "Found archive roots: ${#archive_roots[@]}"
 for r in "${archive_roots[@]}"; do
   log "  archive_root: $r"
 done
 
-mapfile -d '' -t wheels_roots < <(find "$UV_CACHE_DIR" -type d -name '*wheels*' -print0)
+mapfile -d '' -t wheels_roots < <(find "$UV_CACHE_DIR" -type d -name '*wheels*' -print0 2>/dev/null)
 log "Found wheels roots: ${#wheels_roots[@]}"
 for r in "${wheels_roots[@]}"; do
   log "  wheels_root: $r"
@@ -725,12 +611,16 @@ done
 #    Then remove the archive root itself if it becomes empty.
 # -----------------------------------------------------------------------------
 for archive_root in "${archive_roots[@]}"; do
+  [[ -d "$archive_root" ]] || continue
+
   mapfile -d '' -t obj_dirs < <(
-    find "$archive_root" -mindepth 1 -maxdepth 1 -type d -print0
+    find "$archive_root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null
   )
   log "Scanning archive root: $archive_root (objects=${#obj_dirs[@]})"
 
   for obj_dir in "${obj_dirs[@]}"; do
+    [[ -d "$obj_dir" ]] || continue
+
     if has_linked_files "$obj_dir"; then
       log "KEEP archive object (has linked files): $obj_dir"
       continue
@@ -818,11 +708,12 @@ for wheels_root in "${wheels_roots[@]}"; do
   fi
 
   mapfile -d '' -t proj_dirs < <(
-    find "$pypi_root" -mindepth 1 -maxdepth 1 -type d -print0
+    find "$pypi_root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null
   )
   log "Scanning wheels pypi root: $pypi_root (projects=${#proj_dirs[@]})"
 
   for proj_dir in "${proj_dirs[@]}"; do
+    [[ -d "$proj_dir" ]] || continue
     proj_name="$(basename -- "$proj_dir")"
 
     if [[ -s "$keep_projects_file" ]] && grep -Fxq -- "$proj_name" "$keep_projects_file"; then
@@ -838,6 +729,277 @@ done
 log "Done."
 EOF
 chmod +x "$UVSHIM/prune"
+
+
+
+
+
+
+
+# -------------------------
+# lock (shim): promote active venv to pyproject + uv lock (names only)
+# -------------------------
+cat > "$UVSHIM/lock" << 'EOF'
+#!/usr/bin/env bash
+# lock — promote active venv deps to pyproject.toml (names only) and run `uv lock`
+#
+# Walk upward from the active environment directory to find pyproject.toml.
+# If none exists at the venv-level directory, initialize one with `uv init`.
+# Then declare EVERYTHING installed in the environment as plain names
+# (no versions) using uv, and run `uv lock`.
+#
+# Pure-bash implementation: no Python invocations.
+#
+# Requirements:
+# - Active environment (VIRTUAL_ENV set)
+# - uv available in PATH
+
+set -euo pipefail
+
+if [[ -z "${VIRTUAL_ENV:-}" ]]; then
+  echo "error: no active environment (VIRTUAL_ENV is not set)" >&2
+  exit 1
+fi
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "error: uv not found in PATH" >&2
+  exit 1
+fi
+
+# ----------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------
+normalize_name() {
+  # Normalize as in PEP 503-ish: [-_.]+ -> -, lowercase.
+  # Args:
+  #   $1: raw name
+  local raw_name="${1:-}"
+  raw_name="${raw_name,,}"
+  raw_name="$(printf '%s' "$raw_name" | sed -E 's/[-_.]+/-/g')"
+  printf '%s\n' "$raw_name"
+}
+
+is_nvidia_dependency() {
+  # Return success if dependency name should be classified as CUDA/NVIDIA.
+  # Args:
+  #   $1: normalized dependency name
+  local name="${1:-}"
+  if [[ "$name" == *nvidia* || "$name" == *cuda* ]]; then
+    return 0
+  fi
+  return 1
+}
+
+find_site_packages_dirs() {
+  # Find site-packages under the active venv without calling python.
+  # Prints one directory per line.
+  local venv_dir="${1:?}"
+  local found_any="0"
+  local d=""
+
+  while IFS= read -r d; do
+    found_any="1"
+    printf '%s\n' "$d"
+  done < <(
+    find "$venv_dir" -type d \
+      \( -name "site-packages" -o -name "dist-packages" \) \
+      -print 2>/dev/null \
+      | LC_ALL=C sort -u
+  )
+
+  if [[ "$found_any" == "0" ]]; then
+    return 1
+  fi
+}
+
+name_from_dist_info() {
+  # Args:
+  #   $1: path to *.dist-info directory
+  local dist_dir="${1:?}"
+  local meta_path="$dist_dir/METADATA"
+
+  if [[ -f "$meta_path" ]]; then
+    local name_line=""
+    name_line="$(grep -m1 -E '^Name:' "$meta_path" || true)"
+    if [[ -n "$name_line" ]]; then
+      local raw_name=""
+      raw_name="$(printf '%s' "$name_line" | sed -E 's/^Name:[[:space:]]*//')"
+      raw_name="$(printf '%s' "$raw_name" | sed -E 's/[[:space:]]+$//')"
+      if [[ -n "$raw_name" ]]; then
+        normalize_name "$raw_name"
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
+}
+
+name_from_egg_info() {
+  # Args:
+  #   $1: path to *.egg-info (dir or file)
+  local egg_path="${1:?}"
+  local pkg_info=""
+
+  if [[ -d "$egg_path" && -f "$egg_path/PKG-INFO" ]]; then
+    pkg_info="$egg_path/PKG-INFO"
+  elif [[ -f "$egg_path" ]]; then
+    # Rare: single-file *.egg-info; treat it like PKG-INFO-ish
+    pkg_info="$egg_path"
+  else
+    return 1
+  fi
+
+  local name_line=""
+  name_line="$(grep -m1 -E '^Name:' "$pkg_info" || true)"
+  if [[ -n "$name_line" ]]; then
+    local raw_name=""
+    raw_name="$(printf '%s' "$name_line" | sed -E 's/^Name:[[:space:]]*//')"
+    raw_name="$(printf '%s' "$raw_name" | sed -E 's/[[:space:]]+$//')"
+    if [[ -n "$raw_name" ]]; then
+      normalize_name "$raw_name"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+fallback_name_from_metadata_dir_basename() {
+  # Best-effort fallback if METADATA/PKG-INFO missing.
+  local base="${1:?}"
+  base="${base%.dist-info}"
+  base="${base%.egg-info}"
+
+  # If it matches wheel convention {dist}-{version}, strip last -<version-ish>.
+  local prefix="${base%*-}"
+  local suffix="${base##*-}"
+  if [[ "$base" != "$prefix" && "$suffix" =~ ^[0-9] ]]; then
+    base="$prefix"
+  fi
+
+  normalize_name "$base"
+}
+
+# ----------------------------------------------------------------------
+# Ensure pyproject.toml exists at venv-level directory
+# ----------------------------------------------------------------------
+venv_level_dir="$(dirname "$(cd "$VIRTUAL_ENV" && pwd)")"
+
+if [[ ! -f "$venv_level_dir/pyproject.toml" ]]; then
+  echo "No pyproject.toml found at venv level: $venv_level_dir"
+  echo "Initializing with: uv init"
+  (
+    cd "$venv_level_dir"
+    uv init >/dev/null
+  )
+fi
+
+# ----------------------------------------------------------------------
+# Walk upward from the environment directory to find pyproject.toml
+# ----------------------------------------------------------------------
+search_dir="$(cd "$VIRTUAL_ENV" && pwd)"
+pyproject_path=""
+
+while [[ "$search_dir" != "/" ]]; do
+  if [[ -f "$search_dir/pyproject.toml" ]]; then
+    pyproject_path="$search_dir/pyproject.toml"
+    break
+  fi
+  search_dir="$(dirname "$search_dir")"
+done
+
+if [[ -z "$pyproject_path" ]]; then
+  echo "error: could not find pyproject.toml above $VIRTUAL_ENV" >&2
+  exit 1
+fi
+
+project_root="$(dirname "$pyproject_path")"
+echo "Using pyproject.toml at: $pyproject_path"
+
+tmp_names="$(mktemp)"
+tmp_all="$(mktemp)"
+tmp_cuda="$(mktemp)"
+tmp_main="$(mktemp)"
+trap 'rm -f "$tmp_names" "$tmp_all" "$tmp_cuda" "$tmp_main"' EXIT
+
+# ----------------------------------------------------------------------
+# Enumerate installed distributions (names only) without Python
+# ----------------------------------------------------------------------
+site_dirs=""
+if ! site_dirs="$(find_site_packages_dirs "$VIRTUAL_ENV")"; then
+  echo "error: could not locate site-packages under: $VIRTUAL_ENV" >&2
+  exit 1
+fi
+
+while IFS= read -r sp; do
+  find "$sp" -maxdepth 1 -type d -name "*.dist-info" -print 2>/dev/null \
+    | while IFS= read -r dist_dir; do
+        if ! name_from_dist_info "$dist_dir"; then
+          fallback_name_from_metadata_dir_basename "$(basename "$dist_dir")"
+        fi
+      done
+
+  find "$sp" -maxdepth 1 -type d -name "*.egg-info" -print 2>/dev/null \
+    | while IFS= read -r egg_dir; do
+        if ! name_from_egg_info "$egg_dir"; then
+          fallback_name_from_metadata_dir_basename "$(basename "$egg_dir")"
+        fi
+      done
+
+  find "$sp" -maxdepth 1 -type f -name "*.egg-info" -print 2>/dev/null \
+    | while IFS= read -r egg_file; do
+        if ! name_from_egg_info "$egg_file"; then
+          fallback_name_from_metadata_dir_basename "$(basename "$egg_file")"
+        fi
+      done
+done <<<"$site_dirs" >"$tmp_all"
+
+LC_ALL=C sort -u "$tmp_all" >"$tmp_names"
+
+# Split into "main" and "cuda" groups
+while IFS= read -r name; do
+  if [[ -z "$name" ]]; then
+    continue
+  fi
+  if is_nvidia_dependency "$name"; then
+    printf '%s\n' "$name" >>"$tmp_cuda"
+  else
+    printf '%s\n' "$name" >>"$tmp_main"
+  fi
+done <"$tmp_names"
+
+LC_ALL=C sort -u "$tmp_main" -o "$tmp_main" 2>/dev/null || true
+LC_ALL=C sort -u "$tmp_cuda" -o "$tmp_cuda" 2>/dev/null || true
+
+count_total="$(wc -l <"$tmp_names" | tr -d ' ')"
+count_main="$(wc -l <"$tmp_main" | tr -d ' ')"
+count_cuda="$(wc -l <"$tmp_cuda" | tr -d ' ')"
+
+echo "Found ${count_total} installed packages."
+echo " - main: ${count_main}"
+echo " - cuda: ${count_cuda}"
+echo "Adding them to pyproject.toml (no versions, no sync)..."
+
+cd "$project_root"
+
+# Add main deps to [project.dependencies]
+if [[ -s "$tmp_main" ]]; then
+  xargs -a "$tmp_main" -n 50 uv add --raw --no-sync -- >/dev/null
+fi
+
+# Add CUDA deps to optional-dependencies.extra "cuda"
+if [[ -s "$tmp_cuda" ]]; then
+  xargs -a "$tmp_cuda" -n 50 uv add --raw --optional cuda --no-sync -- >/dev/null
+fi
+
+echo "Running: uv lock"
+uv lock
+
+echo "Done."
+EOF
+chmod +x "$UVSHIM/lock"
+
 
 
 
