@@ -122,7 +122,7 @@ if ! shopt -oq posix; then
 fi
 
 # remove unused dependencies from the uv cache
-"${HOME}/.local/uv-shims/prune"
+"${HOME}/.local/uv-shims/uncache"
 if command -v uv >/dev/null 2>&1; then
   mkdir -p -- "${UV_CACHE_DIR:-$HOME/.cache/uv}" 2>/dev/null || true
   uv cache prune >/dev/null 2>&1 || echo "uv cache prune failed" >&2
@@ -132,7 +132,7 @@ fi
 alias py="python"
 alias cls="clear"
 alias storage="du -hc --max-depth=0 /home/${USER}/.local/share/uv/python /home/${USER}/.local/share/uv/tools /mnt/workdata/uv_cache /mnt/workdata/data/"
-alias exit="'${HOME}/.local/uv-shims/prune' && exit"
+alias exit="'${HOME}/.local/uv-shims/uncache' && exit"
 
 # uncomment this to avoid displaying README.md at start up
 # DISPLAY_INFO_AT_STARTUP=false
@@ -151,6 +151,10 @@ case "${DISPLAY_INFO_AT_STARTUP:-false}" in
     ;;
 esac
 DISPLAY_INFO_AT_STARTUP=false
+
+
+# Define ssh functions
+# source "/.config/ssh/define-ssh-functions.sh"
 
 
 # Ensure errexit is disabled in interactive shells to prevent the session from

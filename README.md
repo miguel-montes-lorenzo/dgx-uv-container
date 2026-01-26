@@ -91,7 +91,7 @@ These variables define the container’s user, persistence layout, and session i
 - **lpin** <python interpreter path / python version>: pins Python interpreter locally
 - **lpin** none: unpins locally pinned Python interpreter
 - **interpreters**: shows all installed Python interpreters (marks with (*) uv python selected one)
-- **prune**: cleans from the uv cache python dependencies unreferenced by uv-manged environments
+- **uncache**: cleans from the uv cache python dependencies unreferenced by uv-manged environments
 
 
 ## How to manage ssh Git credentials

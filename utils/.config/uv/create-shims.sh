@@ -512,9 +512,9 @@ chmod +x "$UVSHIM/interpreters"
 
 
 # -------------------------
-# prune (shim): prune uv cache using hardlink GC + venv-installed wheels keep
+# uncache (shim): uncache uv cache using hardlink GC + venv-installed wheels keep
 # -------------------------
-cat > "$UVSHIM/prune" << 'EOF'
+cat > "$UVSHIM/uncache" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -728,7 +728,7 @@ done
 
 log "Done."
 EOF
-chmod +x "$UVSHIM/prune"
+chmod +x "$UVSHIM/uncache"
 
 
 
