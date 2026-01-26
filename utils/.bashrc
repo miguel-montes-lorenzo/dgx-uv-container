@@ -132,6 +132,7 @@ fi
 alias py="python"
 alias cls="clear"
 alias storage="du -hc --max-depth=0 /home/${USER}/.local/share/uv/python /home/${USER}/.local/share/uv/tools /mnt/workdata/uv_cache /mnt/workdata/data/"
+alias exit="'${HOME}/.local/uv-shims/prune' && exit"
 
 # uncomment this to avoid displaying README.md at start up
 # DISPLAY_INFO_AT_STARTUP=false
@@ -150,3 +151,9 @@ case "${DISPLAY_INFO_AT_STARTUP:-false}" in
     ;;
 esac
 DISPLAY_INFO_AT_STARTUP=false
+
+
+# Ensure errexit is disabled in interactive shells to prevent the session from
+# exiting when a command returns a non-zero status
+set +o errexit
+
