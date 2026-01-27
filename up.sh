@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # set -euo pipefail
 source variables.sh
+git config core.hooksPath .githooks
 
 export PROJECT SERVICE CONTAINER_USER
+export PERSISTENT_UV_CACHE
 export HOST_VOLUME_PATH DATA_SUBDIR SSH_SUBDIR UV_CACHE_SUBDIR
 
 # Ensure required directories exist
