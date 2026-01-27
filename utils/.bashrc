@@ -129,15 +129,32 @@ if command -v uv >/dev/null 2>&1; then
 fi
 
 ### CUSTOM
+
+chmod +x "$HOME/.config/uv/uv-cache-dependency-clean.sh"
+
+# aliases
 alias py="python"
 alias cls="clear"
 alias storage="du -hc --max-depth=0 /home/${USER}/.local/share/uv/python /home/${USER}/.local/share/uv/tools /mnt/workdata/uv_cache /mnt/workdata/data/"
-alias exit="'${HOME}/.local/uv-shims/uncache' && exit"
+# alias exit="'${HOME}/.local/uv-shims/uncache' && exit"
+
+exit() {
+  if [[ "${PERSISTENT_UV_CACHE:-true}" != "true" ]]; then
+    DEBUG=0 "$HOME/.config/uv/uv-cache-dependency-clean.sh" >/dev/null 2>&1 || true
+    find /mnt/workdata/uv_cache -mindepth 1 -delete >/dev/null 2>&1 || true
+  fi
+  "$HOME/.local/uv-shims/uncache" || true
+  builtin exit
+}
 
 # uncomment this to avoid displaying README.md at start up
 # DISPLAY_INFO_AT_STARTUP=false
 case "${DISPLAY_INFO_AT_STARTUP:-false}" in
   true|1|yes|on)
+    if [[ "${PERSISTENT_UV_CACHE:-true}" != "true" ]]; then
+      DEBUG=0 "$HOME/.config/uv/uv-cache-dependency-clean.sh" >/dev/null 2>&1 || true
+      find /mnt/workdata/uv_cache -mindepth 1 -delete >/dev/null 2>&1 || true
+    fi
     echo ""
     echo "INSTALLED PYTHON INTERPRETERS:"
     "${HOME}/.local/uv-shims/interpreters"

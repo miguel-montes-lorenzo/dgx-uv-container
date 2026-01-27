@@ -16,6 +16,7 @@ services:
       # uv should use the absolute cache dir
       - USER=${CONTAINER_USER}
       - UV_CACHE_DIR=/mnt/workdata/${UV_CACHE_SUBDIR}
+      - PERSISTENT_UV_CACHE=${PERSISTENT_UV_CACHE}
       - UV_LINK_MODE=hardlink
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
