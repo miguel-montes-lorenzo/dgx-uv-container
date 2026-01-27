@@ -31,6 +31,8 @@ Inside the container, save inside ~/data the files to be kept persistently:
 la .
 ```
 ```bash
+Output:
+
 .bash_logout  .bashrc  .cache  .config  .local  .profile  .ssh  README.md  data
 ```
 Terminate the container terminal session:
@@ -92,85 +94,71 @@ These variables define the container’s user, persistence layout, and session i
 - **lpin** none: unpins locally pinned Python interpreter
 - **interpreters**: shows all installed Python interpreters (marks with (*) uv python selected one)
 - **uncache**: cleans from the uv cache python dependencies unreferenced by uv-manged environments
+- **lock**: dumps dependencies installed in the active environment into `pyproject.toml` and `uv.lock`
 
 
 ## How to manage ssh Git credentials
-This container supports persistent SSH configuration via the `~/.ssh` volume, making it easy to use
-repository-specific deploy keys.
 
-**1. Generate an ed25519 deploy key**
+This container supports persistent SSH configuration via the `~/.ssh` volume and includes predefined helper functions that make it easy to use repository-specific deploy keys.
 
-Generate a dedicated key per repository:
+**If the repository is private (requires key for cloning)**
 
-```bash
-ssh-keygen -t ed25519 \
-  -C "deploy-key-<repo-alias>" \
-  -f ~/.ssh/id_ed25519_<repo-alias> \
-  -N ""
-```
-
-Set secure permissions:
+First, generate a new repository-specific SSH deploy key and register it locally:
 
 ```bash
-chmod 600 ~/.ssh/id_ed25519_<repo-alias>
-chmod 644 ~/.ssh/id_ed25519_<repo-alias>.pub
+register-ssh-keys
 ```
 
-**2. Add the deploy key to GitHub**
-
-In the GitHub repository:
-`Settings → Deploy keys → Add deploy key`
-
-Paste the contents of:
+This command creates a new SSH key pair and prints the public key along with a short alias that will identify the repository in your SSH configuration.
 
 ```bash
-cat ~/.ssh/id_ed25519_<repo-alias>.pub
+Output:
+
+Include the following public key in your GitHub repository (Settings → Deploy keys → Add deploy key):
+> PUBLIC KEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJBgQ+q+aNMCkD+8bRbWkLr/5At0XTpwQh7uJNnr3Yhd deploy-key-repo_3821357898
+Then clone the repository, change directory to its root and run:
+> register-ssh-host --alias=2v0zkmeriy
 ```
 
-Enable **“Allow write access”** if needed.
-
-**3. Configure `~/.ssh/config`**
-
-Map the repository to its deploy key:
-
-```ssh
-Host <host-alias>  # e.g.: github.com-<repo-alias>
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/id_ed25519_<repo-alias>
-  IdentitiesOnly yes
-  StrictHostKeyChecking yes
-```
-
-Set permissions and verify access:
+Clone the repository via ssh:
 
 ```bash
-chmod 600 ~/.ssh/config
-ssh-keyscan -H <host-alias> >> ~/.ssh/known_hosts
-ssh -T git@github.com
+git clone git@github.com:<github-username>/<repo-name>.git
+cd <repo-name>
 ```
 
-**4. Point the repository remote to the SSH host alias**
-
-Update origin to use the host alias:
+Once inside the repository, update its Git remote to use the generated SSH host alias:
 
 ```bash
-cd <repo-local-dir>
-git remote get-url origin  # this shows remote direction
-# e.g. git@github.com-dgx-uv:miguel-montes-lorenzo/dgx-uv-container.git
-git remote set-url origin <host-alias>:<owner>/<repo>.git
+register-ssh-host --alias=<alias-given-by-register-ssh-keys>  # in this case it would be: 2v0zkmeriy
 ```
 
-or in one line:
+---
+
+**If the repository is public**
+
+Clone the repository via https:
 
 ```bash
-cd <repo-local-dir>
-git remote set-url origin "$(git remote get-url origin | sed 's/^git@github\.com:/git@github.com-<repo-name>:/')"
+git clone https://github.com/<github-username>/<repo-name>.git
 ```
 
-Push the commits to the remote:
+Change into the repository directory and register it to use a repository-specific SSH deploy key:
 
 ```bash
-git remote -v  # check remote direction is correctly set
-git push
+cd <repo-name>
+register-ssh-host
 ```
+
+This will generate a new deploy key, add a corresponding SSH host entry, and print the public key to be added to GitHub:
+
+```bash
+Output:
+
+[...]
+Include the following public key in your GitHub repository (Settings → Deploy keys → Add deploy key).
+> PUBLIC KEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZUiEhN+93/ilUL0o/ran7lfCJWlF46kHnEnPonFU5+ deploy-key-repo_7281203282
+Repository registered in ssh config.
+```
+
+After adding the key to GitHub, the repository will transparently use SSH with the deploy key for future Git operations.

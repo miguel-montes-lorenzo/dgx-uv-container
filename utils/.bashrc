@@ -154,7 +154,8 @@ DISPLAY_INFO_AT_STARTUP=false
 
 
 # Define ssh functions
-# source "/.config/ssh/define-ssh-functions.sh"
+source "${HOME}/.config/ssh/define-ssh-functions.sh"
+prune-ssh-config >/dev/null 2>&1 || true
 
 
 # Ensure errexit is disabled in interactive shells to prevent the session from
