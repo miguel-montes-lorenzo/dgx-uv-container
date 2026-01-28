@@ -23,4 +23,5 @@ if docker compose -p "${PROJECT}" ps -q >/dev/null 2>&1 \
     docker compose -p "${PROJECT}" down
 fi
 docker compose -p "${PROJECT}" up -d --build
+# docker compose -p "${PROJECT}" build --no-cache --progress=plain
 docker compose -p "${PROJECT}" ps

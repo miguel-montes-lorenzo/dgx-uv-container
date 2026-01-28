@@ -1,36 +1,15 @@
-register-ssh-host() {
-  # register-ssh-host
+register-github-repo() {
+  # register-github-repo
   #
   # Usage:
-  #   register-ssh-host
-  #   register-ssh-host --alias=<alias>
-  #
-  # Behavior:
-  # - Without flags:
-  #   - Require CWD is a git repo.
-  #   - Require CWD is not already a Host alias in ~/.ssh/config.
-  #   - Generate a new ed25519 deploy key: ~/.ssh/id_ed25519_repo_<10digits>
-  #   - Append Host entry with alias = "<CWD>"
-  #   - chmod 600 ~/.ssh/config
-  #   - Print the public key instructions.
-  #
-  # - With --alias=<alias>:
-  #   - Require alias exists as a Host in ~/.ssh/config.
-  #   - Require CWD is a git repo.
-  #   - Require CWD is not already a Host alias in ~/.ssh/config.
-  #   - Rename that Host alias to "<CWD>" (preserving rest of block).
-  #
-  # In both cases:
-  # - git remote set-url origin <CWD>:<owner>/<repo>.git
-  # - Reorder ~/.ssh/config Host blocks alphabetically by alias.
+  #   register-github-repo
+  #   register-github-repo --key=<keyname>
+  #   register-github-repo --remote=git@github.com:<username>/<repo-name>.git
   #
   # Important:
   # - No `set -e`, to avoid exiting an interactive shell/container on controlled errors.
   # - History is disabled during execution to avoid polluting ~/.bash_history.
 
-  # ----------------------------
-  # Save/restore only what we touch
-  # ----------------------------
   local _rss__was_history="off"
   local _rss__was_nounset="off"
   local _rss__was_pipefail="off"
@@ -65,17 +44,22 @@ register-ssh-host() {
     return "$code"
   }
 
-  # ----------------------------
-  # Parse args
-  # ----------------------------
-  local cfg="$HOME/.ssh/config"
   local ssh_dir="$HOME/.ssh"
-  local alias_arg=""
+  local cfg="$ssh_dir/config"
+  local repo_index="$ssh_dir/github-repo-index"
+
+  local key_arg=""
+  local remote_arg=""
+
+  prune-github-credentials
 
   while [[ $# -gt 0 ]]; do
     case "${1-}" in
-      --alias=*)
-        alias_arg="${1#--alias=}"
+      --key=*)
+        key_arg="${1#--key=}"
+        ;;
+      --remote=*)
+        remote_arg="${1#--remote=}"
         ;;
       *)
         printf 'error: unknown argument: %s\n' "${1-}" >&2
@@ -86,23 +70,43 @@ register-ssh-host() {
     shift || true
   done
 
-  if [[ -n "$alias_arg" && ! "$alias_arg" =~ ^[A-Za-z0-9]+$ ]]; then
-    printf 'error: --alias must be [A-Za-z0-9]+ (got: %s)\n' "$alias_arg" >&2
+  if [[ -n "$remote_arg" && -n "$key_arg" ]]; then
+    printf 'error: --remote and --key are not compatible\n' >&2
     _rss__exit 2
     return $?
   fi
 
-  # ----------------------------
-  # Preconditions
-  # ----------------------------
-  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    printf 'error: current directory is not a git repository\n' >&2
-    _rss__exit 1
-    return $?
+  if [[ -n "$remote_arg" ]]; then
+    if [[ "$remote_arg" =~ [[:space:]] ]]; then
+      printf 'error: --remote must not contain whitespace: %s\n' "$remote_arg" >&2
+      _rss__exit 2
+      return $?
+    fi
+    if [[ ! "$remote_arg" =~ ^git@github\.com:[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\.git$ ]]; then
+      printf 'error: invalid GitHub SSH remote: %s\n' "$remote_arg" >&2
+      printf 'error: expected format: git@github.com:<username>/<repo-name>.git\n' >&2
+      _rss__exit 2
+      return $?
+    fi
   fi
 
-  local cwd=""
-  cwd="$(pwd -P)"
+  if [[ -n "$key_arg" ]]; then
+    if [[ "$key_arg" == *"/"* ]]; then
+      printf 'error: --key must be a basename (no /): %s\n' "$key_arg" >&2
+      _rss__exit 2
+      return $?
+    fi
+    if [[ "$key_arg" =~ [[:space:]] ]]; then
+      printf 'error: --key must not contain whitespace: %s\n' "$key_arg" >&2
+      _rss__exit 2
+      return $?
+    fi
+    if [[ ! "$key_arg" =~ ^[A-Za-z0-9._-]+$ ]]; then
+      printf 'error: --key contains invalid characters: %s\n' "$key_arg" >&2
+      _rss__exit 2
+      return $?
+    fi
+  fi
 
   mkdir -p "$ssh_dir" >/dev/null 2>&1 || {
     printf 'error: could not create %s\n' "$ssh_dir" >&2
@@ -120,267 +124,18 @@ register-ssh-host() {
   fi
   chmod 600 "$cfg" >/dev/null 2>&1 || true
 
-  _rss__host_aliases() {
-    awk '
-      function ltrim(s){ sub(/^[ \t\r\n]+/, "", s); return s }
-      function rtrim(s){ sub(/[ \t\r\n]+$/, "", s); return s }
-      function trim(s){ return rtrim(ltrim(s)) }
-      {
-        line=$0
-        sub(/\r$/, "", line)
-        t=trim(line)
-        if (t ~ /^#/ || t == "") next
-        if (t ~ /^Host[ \t]+/) {
-          sub(/^Host[ \t]+/, "", t)
-          split(t, a, /[ \t]+/)
-          if (a[1] != "") print a[1]
-        }
-      }
-    ' "$cfg"
-  }
+  (
+    set -o noclobber
+    : >"$repo_index"
+  ) >/dev/null 2>&1 || true
 
-  if _rss__host_aliases | awk -v want="$cwd" '$0==want{found=1} END{exit found?0:1}'; then
-    printf 'error: cwd is already present as a Host alias in %s\n' "$cfg" >&2
+  if [[ ! -e "$repo_index" ]]; then
+    printf 'error: could not create %s\n' "$repo_index" >&2
     _rss__exit 1
     return $?
   fi
+  chmod 600 "$repo_index" >/dev/null 2>&1 || true
 
-  if [[ -n "$alias_arg" ]]; then
-    if ! _rss__host_aliases | awk -v want="$alias_arg" \
-      '$0==want{found=1} END{exit found?0:1}'; then
-      printf 'error: alias not found in %s: %s\n' "$cfg" "$alias_arg" >&2
-      _rss__exit 1
-      return $?
-    fi
-  fi
-
-  # ----------------------------
-  # Sort ~/.ssh/config blocks by alias (pure bash)
-  # ----------------------------
-  _rss__sort_ssh_config_by_alias() {
-    local in_file="$1"
-    local out_file="$2"
-
-    local tmpd=""
-    tmpd="$(mktemp -d)" || return 1
-
-    local pre="$tmpd/preamble"
-    local map="$tmpd/map.tsv"
-    : >"$pre" || {
-      rm -rf "$tmpd"
-      return 1
-    }
-    : >"$map" || {
-      rm -rf "$tmpd"
-      return 1
-    }
-
-    local in_block="0"
-    local cur_alias=""
-    local cur_file=""
-    local idx="0"
-    local line=""
-
-    _rss__flush_block() {
-      if [[ "$in_block" == "1" ]]; then
-        printf '%s\t%s\n' "$cur_alias" "$cur_file" >>"$map" || return 1
-      fi
-      return 0
-    }
-
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      line="${line%$'\r'}"
-
-      if [[ "$line" =~ ^[[:space:]]*Host[[:space:]]+ ]] && \
-         [[ ! "$line" =~ ^[[:space:]]*# ]]; then
-        if ! _rss__flush_block; then
-          rm -rf "$tmpd"
-          return 1
-        fi
-
-        idx="$((idx + 1))"
-        cur_file="$tmpd/block_$idx"
-        : >"$cur_file" || {
-          rm -rf "$tmpd"
-          return 1
-        }
-
-        cur_alias="$(
-          printf '%s\n' "$line" \
-            | awk '{for (i=1;i<=NF;i++) if ($i=="Host"){print $(i+1); exit}}'
-        )"
-
-        in_block="1"
-        printf '%s\n' "$line" >>"$cur_file" || {
-          rm -rf "$tmpd"
-          return 1
-        }
-      else
-        if [[ "$in_block" == "1" ]]; then
-          printf '%s\n' "$line" >>"$cur_file" || {
-            rm -rf "$tmpd"
-            return 1
-          }
-        else
-          printf '%s\n' "$line" >>"$pre" || {
-            rm -rf "$tmpd"
-            return 1
-          }
-        fi
-      fi
-    done <"$in_file"
-
-    if ! _rss__flush_block; then
-      rm -rf "$tmpd"
-      return 1
-    fi
-
-    : >"$out_file" || {
-      rm -rf "$tmpd"
-      return 1
-    }
-
-    cat "$pre" >>"$out_file" || {
-      rm -rf "$tmpd"
-      return 1
-    }
-
-    local first="1"
-    local file_path=""
-    local _alias=""
-
-    while IFS=$'\t' read -r _alias file_path; do
-      [[ -n "$file_path" ]] || continue
-
-      if [[ "$first" == "1" ]]; then
-        first="0"
-        if [[ -s "$out_file" ]]; then
-          if [[ "$(tail -n 1 "$out_file" | tr -d ' \t')" != "" ]]; then
-            printf '\n' >>"$out_file" || {
-              rm -rf "$tmpd"
-              return 1
-            }
-          fi
-        fi
-      else
-        printf '\n' >>"$out_file" || {
-          rm -rf "$tmpd"
-          return 1
-        }
-      fi
-
-      cat "$file_path" >>"$out_file" || {
-        rm -rf "$tmpd"
-        return 1
-      }
-
-      if [[ "$(tail -c 1 "$out_file" 2>/dev/null || true)" != $'\n' ]]; then
-        printf '\n' >>"$out_file" || {
-          rm -rf "$tmpd"
-          return 1
-        }
-      fi
-    done < <(LC_ALL=C sort -t $'\t' -k1,1 "$map")
-
-    rm -rf "$tmpd"
-    return 0
-  }
-
-  # ----------------------------
-  # Main branches
-  # ----------------------------
-  local key_id=""
-  local key_priv=""
-  local key_pub=""
-
-  if [[ -z "$alias_arg" ]]; then
-    key_id="$(LC_ALL=C tr -dc '0-9' </dev/urandom | head -c 10)"
-    key_priv="$ssh_dir/id_ed25519_repo_${key_id}"
-    key_pub="${key_priv}.pub"
-
-    if [[ -e "$key_priv" || -e "$key_pub" ]]; then
-      printf 'error: key path already exists: %s\n' "$key_priv" >&2
-      _rss__exit 1
-      return $?
-    fi
-
-    if ! ssh-keygen -t ed25519 \
-      -C "deploy-key-repo_${key_id}" \
-      -f "$key_priv" \
-      -N ""; then
-      printf 'error: ssh-keygen failed\n' >&2
-      _rss__exit 1
-      return $?
-    fi
-
-    chmod 600 "$key_priv" >/dev/null 2>&1 || true
-    chmod 644 "$key_pub" >/dev/null 2>&1 || true
-
-    {
-      printf '\n'
-      printf 'Host %s\n' "$cwd"
-      printf '  HostName github.com\n'
-      printf '  User git\n'
-      printf '  IdentityFile %s\n' "$key_priv"
-      printf '  IdentitiesOnly yes\n'
-      printf '  StrictHostKeyChecking yes\n'
-    } >>"$cfg" || {
-      printf 'error: could not write to %s\n' "$cfg" >&2
-      _rss__exit 1
-      return $?
-    }
-
-    chmod 600 "$cfg" >/dev/null 2>&1 || true
-
-    printf 'Include the following public key in your GitHub repository (Settings → Deploy keys → Add deploy key).\n'
-    printf '> PUBLIC KEY: %s\n' "$(cat "$key_pub")"
-
-  else
-    local tmp_cfg=""
-    tmp_cfg="$(mktemp)" || {
-      printf 'error: mktemp failed\n' >&2
-      _rss__exit 1
-      return $?
-    }
-
-    if ! awk -v old="$alias_arg" -v new="$cwd" '
-      function ltrim(s){ sub(/^[ \t\r\n]+/, "", s); return s }
-      function rtrim(s){ sub(/[ \t\r\n]+$/, "", s); return s }
-      function trim(s){ return rtrim(ltrim(s)) }
-      {
-        line=$0
-        sub(/\r$/, "", line)
-        t=trim(line)
-        if (t ~ /^Host[ \t]+/) {
-          rest=t
-          sub(/^Host[ \t]+/, "", rest)
-          split(rest, a, /[ \t]+/)
-          if (a[1] == old) {
-            print "Host " new
-            next
-          }
-        }
-        print line
-      }
-    ' "$cfg" >"$tmp_cfg"; then
-      rm -f "$tmp_cfg" >/dev/null 2>&1 || true
-      printf 'error: failed to update %s\n' "$cfg" >&2
-      _rss__exit 1
-      return $?
-    fi
-
-    if ! mv -f "$tmp_cfg" "$cfg"; then
-      rm -f "$tmp_cfg" >/dev/null 2>&1 || true
-      printf 'error: failed to replace %s\n' "$cfg" >&2
-      _rss__exit 1
-      return $?
-    fi
-    chmod 600 "$cfg" >/dev/null 2>&1 || true
-  fi
-
-  # ----------------------------
-  # Update origin URL: <cwd>:<owner>/<repo>.git
-  # ----------------------------
   _rss__origin_owner_repo() {
     local origin_url="$1"
     local s="$origin_url"
@@ -401,53 +156,598 @@ register-ssh-host() {
     return 1
   }
 
-  local origin_url=""
-  origin_url="$(git remote get-url origin 2>/dev/null || true)"
-  if [[ -z "$origin_url" ]]; then
-    printf 'error: origin remote not found\n' >&2
-    _rss__exit 1
-    return $?
-  fi
-
-  local owner_repo=""
-  if ! owner_repo="$(_rss__origin_owner_repo "$origin_url")"; then
-    printf 'error: could not parse owner/repo from origin: %s\n' "$origin_url" >&2
-    _rss__exit 1
-    return $?
-  fi
-
-  if ! git remote set-url origin "${cwd}:${owner_repo}.git"; then
-    printf 'error: failed to set origin url\n' >&2
-    _rss__exit 1
-    return $?
-  fi
-
-  # ----------------------------
-  # Sort config and write back
-  # ----------------------------
-  local sorted_cfg=""
-  sorted_cfg="$(mktemp)" || {
-    printf 'error: mktemp failed\n' >&2
-    _rss__exit 1
-    return $?
+  _rss__repo_index_has_path() {
+    local want_path="$1"
+    awk -v want="$want_path" '
+      function ltrim(s){ sub(/^[ \t\r\n]+/, "", s); return s }
+      function rtrim(s){ sub(/[ \t\r\n]+$/, "", s); return s }
+      function trim(s){ return rtrim(ltrim(s)) }
+      {
+        line=$0
+        sub(/\r$/, "", line)
+        t=trim(line)
+        if (t == "" || t ~ /^#/) next
+        n=split(t, a, /[ \t]+/)
+        if (n >= 2 && a[1] == want) { found=1; exit }
+      }
+      END { exit found?0:1 }
+    ' "$repo_index"
   }
 
-  if ! _rss__sort_ssh_config_by_alias "$cfg" "$sorted_cfg"; then
-    rm -f "$sorted_cfg" >/dev/null 2>&1 || true
-    printf 'error: failed to sort %s\n' "$cfg" >&2
+  _rss__repo_index_has_key() {
+    local want_key="$1"
+    awk -v want="$want_key" '
+      function ltrim(s){ sub(/^[ \t\r\n]+/, "", s); return s }
+      function rtrim(s){ sub(/[ \t\r\n]+$/, "", s); return s }
+      function trim(s){ return rtrim(ltrim(s)) }
+      {
+        line=$0
+        sub(/\r$/, "", line)
+        t=trim(line)
+        if (t == "" || t ~ /^#/) next
+        n=split(t, a, /[ \t]+/)
+        if (n >= 2 && a[2] == want) { found=1; exit }
+      }
+      END { exit found?0:1 }
+    ' "$repo_index"
+  }
+
+  _rss__ensure_github_host_block_exists() {
+    if awk '
+      function ltrim(s){ sub(/^[ \t\r\n]+/, "", s); return s }
+      function rtrim(s){ sub(/[ \t\r\n]+$/, "", s); return s }
+      function trim(s){ return rtrim(ltrim(s)) }
+      {
+        line=$0
+        sub(/\r$/, "", line)
+        t=trim(line)
+        if (t ~ /^Host[ \t]+github\.com([ \t]|$)/ && t !~ /^#/) { found=1; exit }
+      }
+      END { exit found?0:1 }
+    ' "$cfg"; then
+      return 0
+    fi
+
+    {
+      printf '\n'
+      printf 'Host github.com\n'
+      printf '  HostName github.com\n'
+      printf '  User git\n'
+      printf '  IdentitiesOnly yes\n'
+      printf '  StrictHostKeyChecking yes\n'
+      printf '\n'
+    } >>"$cfg" || return 1
+
+    return 0
+  }
+
+  _rss__append_identityfile_to_github_block() {
+    local key_abs="$1"
+
+    local tmp=""
+    tmp="$(mktemp)" || return 1
+
+    if ! awk -v key="$key_abs" '
+      function ltrim(s){ sub(/^[ \t\r\n]+/, "", s); return s }
+      function rtrim(s){ sub(/[ \t\r\n]+$/, "", s); return s }
+      function trim(s){ return rtrim(ltrim(s)) }
+
+      BEGIN {
+        in_github=0
+        inserted=0
+      }
+
+      function flush_insert_if_needed() {
+        if (in_github && !inserted) {
+          print "  IdentityFile " key
+          inserted=1
+        }
+      }
+
+      {
+        line=$0
+        sub(/\r$/, "", line)
+        t=trim(line)
+
+        if (t ~ /^Host[ \t]+/ && t !~ /^#/) {
+          if (in_github) {
+            flush_insert_if_needed()
+            in_github=0
+          }
+
+          rest=t
+          sub(/^Host[ \t]+/, "", rest)
+          split(rest, a, /[ \t]+/)
+          if (a[1] == "github.com") {
+            in_github=1
+            inserted=0
+          }
+          print line
+          next
+        }
+
+        if (in_github && t ~ /^(IdentitiesOnly|StrictHostKeyChecking)[ \t]+/ && t !~ /^#/) {
+          flush_insert_if_needed()
+          print line
+          next
+        }
+
+        print line
+      }
+
+      END {
+        if (in_github) {
+          flush_insert_if_needed()
+        }
+      }
+    ' "$cfg" >"$tmp"; then
+      rm -f "$tmp" >/dev/null 2>&1 || true
+      return 1
+    fi
+
+    if ! mv -f "$tmp" "$cfg"; then
+      rm -f "$tmp" >/dev/null 2>&1 || true
+      return 1
+    fi
+
+    return 0
+  }
+
+  _rss__github_block_has_identityfile_for_key() {
+    local key_abs="$1"
+    local key_base="$2"
+    local key_tilde="~/.ssh/${key_base}"
+
+    awk -v want1="$key_abs" -v want2="$key_tilde" '
+      function ltrim(s){ sub(/^[ \t\r\n]+/, "", s); return s }
+      function rtrim(s){ sub(/[ \t\r\n]+$/, "", s); return s }
+      function trim(s){ return rtrim(ltrim(s)) }
+
+      BEGIN { in_github=0; found=0 }
+
+      {
+        line=$0
+        sub(/\r$/, "", line)
+        t=trim(line)
+
+        if (t ~ /^Host[ \t]+/ && t !~ /^#/) {
+          rest=t
+          sub(/^Host[ \t]+/, "", rest)
+          split(rest, a, /[ \t]+/)
+          in_github = (a[1] == "github.com") ? 1 : 0
+        }
+
+        if (in_github && t ~ /^IdentityFile[ \t]+/ && t !~ /^#/) {
+          p=t
+          sub(/^IdentityFile[ \t]+/, "", p)
+          p=trim(p)
+          if (p == want1 || p == want2) {
+            found=1
+            exit
+          }
+        }
+      }
+
+      END { exit found?0:1 }
+    ' "$cfg"
+  }
+
+  _rss__sort_repo_index_by_path() {
+    local tmp=""
+    tmp="$(mktemp)" || return 1
+
+    if ! awk '
+      function ltrim(s){ sub(/^[ \t\r\n]+/, "", s); return s }
+      function rtrim(s){ sub(/[ \t\r\n]+$/, "", s); return s }
+      function trim(s){ return rtrim(ltrim(s)) }
+      {
+        line=$0
+        sub(/\r$/, "", line)
+        t=trim(line)
+        if (t == "" || t ~ /^#/) next
+        n=split(t, a, /[ \t]+/)
+        if (n >= 2) print a[1] "\t" a[2]
+      }
+    ' "$repo_index" | LC_ALL=C sort -t $'\t' -k1,1 | awk -F $'\t' '
+      { print $1 " " $2 }
+    ' >"$tmp"; then
+      rm -f "$tmp" >/dev/null 2>&1 || true
+      return 1
+    fi
+
+    if ! mv -f "$tmp" "$repo_index"; then
+      rm -f "$tmp" >/dev/null 2>&1 || true
+      return 1
+    fi
+
+    return 0
+  }
+
+  _rss__prompt_continue_clone() {
+    local ans=""
+    while :; do
+      printf 'Continue with cloning [y/n]? '
+      IFS= read -r ans || return 1
+      case "${ans,,}" in
+        y|yes) return 0 ;;
+        n|no) return 2 ;;
+        *) printf 'Please answer y or n.\n' >&2 ;;
+      esac
+    done
+  }
+
+  # ------------------------------------------------------------
+  # --remote mode (DO ALL DIRECTORY CHECKS BEFORE KEY CREATION)
+  # ------------------------------------------------------------
+  if [[ -n "$remote_arg" ]]; then
+    if ! command -v ssh-keygen >/dev/null 2>&1; then
+      printf 'error: ssh-keygen not found in PATH\n' >&2
+      _rss__exit 1
+      return $?
+    fi
+    if ! command -v git >/dev/null 2>&1; then
+      printf 'error: git not found in PATH\n' >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    local start_dir=""
+    start_dir="$(pwd -P)"
+
+    local repo_dir=""
+    repo_dir="${remote_arg##*/}"
+    repo_dir="${repo_dir%.git}"
+
+    if [[ -z "$repo_dir" ]]; then
+      printf 'error: could not derive repo directory name from --remote\n' >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    if [[ -e "$repo_dir" ]]; then
+      printf 'error: target path already exists: %s\n' "$repo_dir" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    # Only now create key pair + touch ssh config.
+    local key_id=""
+    local key_name=""
+    local key_priv=""
+    local key_pub=""
+
+    while :; do
+      key_id="$(LC_ALL=C tr -dc '0-9' </dev/urandom | head -c 10)"
+      key_name="id_ed25519_repo_${key_id}"
+
+      if _rss__repo_index_has_key "$key_name"; then
+        continue
+      fi
+
+      key_priv="$ssh_dir/$key_name"
+      key_pub="${key_priv}.pub"
+
+      if [[ -e "$key_priv" || -e "$key_pub" ]]; then
+        continue
+      fi
+
+      break
+    done
+
+    if ! ssh-keygen -t ed25519 \
+      -C "deploy-key-repo_${key_id}" \
+      -f "$key_priv" \
+      -N ""; then
+      printf 'error: ssh-keygen failed\n' >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    chmod 600 "$key_priv" >/dev/null 2>&1 || true
+    chmod 644 "$key_pub" >/dev/null 2>&1 || true
+
+    if ! _rss__ensure_github_host_block_exists; then
+      printf 'error: failed to ensure github.com entry in %s\n' "$cfg" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    if ! _rss__append_identityfile_to_github_block "$key_priv"; then
+      printf 'error: failed to add IdentityFile to github.com entry in %s\n' "$cfg" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    # Print endpoint + public key (only in --remote mode)
+    local owner_repo_for_endpoint=""
+    owner_repo_for_endpoint="$(_rss__origin_owner_repo "$remote_arg")" || {
+      printf 'error: could not derive owner/repo from --remote: %s\n' "$remote_arg" >&2
+      _rss__exit 1
+      return $?
+    }
+
+    printf 'Include the following public key in your GitHub repository (Settings → Deploy keys → Add deploy key).\n'
+    printf '> ENDPOINT: https://github.com/%s/settings/keys\n' "$owner_repo_for_endpoint"
+    printf '> PUBLIC KEY: %s\n' "$(cat "$key_pub")"
+
+    while :; do
+      local rc_prompt=0
+      _rss__prompt_continue_clone
+      rc_prompt=$?
+
+      if [[ $rc_prompt -eq 2 ]]; then
+        if command -v prune-github-credentials >/dev/null 2>&1; then
+          prune-github-credentials >/dev/null 2>&1 || true
+        fi
+        _rss__exit 0
+        return $?
+      fi
+      if [[ $rc_prompt -ne 0 ]]; then
+        printf 'error: could not read user input\n' >&2
+        _rss__exit 1
+        return $?
+      fi
+
+      if git clone "$remote_arg" "$repo_dir"; then
+        break
+      fi
+
+      printf 'Clone failed. If you just added the deploy key, wait a moment and try again.\n' >&2
+      if [[ -d "$repo_dir" ]]; then
+        rm -rf -- "$repo_dir" >/dev/null 2>&1 || true
+      fi
+    done
+
+    if ! cd -- "$repo_dir"; then
+      printf 'error: could not cd into %s\n' "$repo_dir" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    # IMPORTANT FIX:
+    # Do not call register-github-repo --key=... here, because that would prune
+    # the just-created key before it is referenced in github-repo-index.
+    local cwd_remote=""
+    cwd_remote="$(pwd -P)"
+
+    if [[ ! -f "$key_priv" ]]; then
+      printf 'error: ssh key not found: %s\n' "$key_priv" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    if _rss__repo_index_has_key "$key_name"; then
+      printf 'error: key already present in %s: %s\n' "$repo_index" "$key_name" >&2
+      _rss__exit 1
+      return $?
+    fi
+    if _rss__repo_index_has_path "$cwd_remote"; then
+      printf 'error: %s already has an entry in %s\n' "$cwd_remote" "$repo_index" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    {
+      printf '%s %s\n' "$cwd_remote" "$key_name"
+    } >>"$repo_index" || {
+      printf 'error: could not write to %s\n' "$repo_index" >&2
+      _rss__exit 1
+      return $?
+    }
+
+    if ! _rss__sort_repo_index_by_path; then
+      printf 'error: failed to sort %s\n' "$repo_index" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    chmod 600 "$cfg" >/dev/null 2>&1 || true
+    chmod 600 "$repo_index" >/dev/null 2>&1 || true
+
+    printf 'Repository registered in ssh config.\n'
+
+    _rss__exit 0
+    return $?
+  fi
+
+  # ------------------------------------------------------------
+  # Non-remote modes: require we are inside a git repo
+  # ------------------------------------------------------------
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf 'error: current directory is not a git repository\n' >&2
     _rss__exit 1
     return $?
   fi
 
-  if ! mv -f "$sorted_cfg" "$cfg"; then
-    rm -f "$sorted_cfg" >/dev/null 2>&1 || true
-    printf 'error: failed to write %s\n' "$cfg" >&2
-    _rss__exit 1
-    return $?
+  local cwd=""
+  cwd="$(pwd -P)"
+
+  local key_name=""
+  local key_priv=""
+  local key_pub=""
+
+  if [[ -z "$key_arg" ]]; then
+    # Directory-origin checks first (NO KEY CREATION BEFORE THESE)
+    if _rss__repo_index_has_path "$cwd"; then
+      printf 'error: %s already has an entry in %s\n' "$cwd" "$repo_index" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    local origin_url=""
+    origin_url="$(git remote get-url origin 2>/dev/null || true)"
+    if [[ -z "$origin_url" ]]; then
+      printf 'error: origin remote not found\n' >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    local owner_repo=""
+    if ! owner_repo="$(_rss__origin_owner_repo "$origin_url")"; then
+      printf 'error: could not parse owner/repo from origin: %s\n' "$origin_url" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    # Only now create key
+    local key_id=""
+    while :; do
+      key_id="$(LC_ALL=C tr -dc '0-9' </dev/urandom | head -c 10)"
+      key_name="id_ed25519_repo_${key_id}"
+
+      if _rss__repo_index_has_key "$key_name"; then
+        continue
+      fi
+
+      key_priv="$ssh_dir/$key_name"
+      key_pub="${key_priv}.pub"
+
+      if [[ -e "$key_priv" || -e "$key_pub" ]]; then
+        continue
+      fi
+      break
+    done
+
+    if ! ssh-keygen -t ed25519 \
+      -C "deploy-key-repo_${key_id}" \
+      -f "$key_priv" \
+      -N ""; then
+      printf 'error: ssh-keygen failed\n' >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    chmod 600 "$key_priv" >/dev/null 2>&1 || true
+    chmod 644 "$key_pub" >/dev/null 2>&1 || true
+
+    if ! _rss__ensure_github_host_block_exists; then
+      printf 'error: failed to ensure github.com entry in %s\n' "$cfg" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    if ! _rss__append_identityfile_to_github_block "$key_priv"; then
+      printf 'error: failed to add IdentityFile to github.com entry in %s\n' "$cfg" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    {
+      printf '%s %s\n' "$cwd" "$key_name"
+    } >>"$repo_index" || {
+      printf 'error: could not write to %s\n' "$repo_index" >&2
+      _rss__exit 1
+      return $?
+    }
+
+    if ! _rss__sort_repo_index_by_path; then
+      printf 'error: failed to sort %s\n' "$repo_index" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    if ! git remote set-url origin "git@github.com:${owner_repo}.git"; then
+      printf 'error: failed to set origin url\n' >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    printf 'Include the following public key in your GitHub repository (Settings → Deploy keys → Add deploy key).\n'
+    printf '> PUBLIC KEY: %s\n' "$(cat "$key_pub")"
+  else
+    key_name="$key_arg"
+    key_priv="$ssh_dir/$key_name"
+    local key_base=""
+    key_base="$(basename -- "$key_name")"
+
+    # Directory checks first (NO MODIFICATIONS BEFORE THESE)
+    if [[ ! -f "$key_priv" ]]; then
+      printf 'error: ssh key not found: %s\n' "$key_priv" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    if [[ ! -e "$repo_index" ]]; then
+      printf 'error: missing %s\n' "$repo_index" >&2
+      _rss__exit 1
+      return $?
+    fi
+    if _rss__repo_index_has_key "$key_name"; then
+      printf 'error: key already present in %s: %s\n' "$repo_index" "$key_name" >&2
+      _rss__exit 1
+      return $?
+    fi
+    if _rss__repo_index_has_path "$cwd"; then
+      printf 'error: %s already has an entry in %s\n' "$cwd" "$repo_index" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    local origin_url=""
+    origin_url="$(git remote get-url origin 2>/dev/null || true)"
+    if [[ -z "$origin_url" ]]; then
+      printf 'error: origin remote not found\n' >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    local owner_repo=""
+    if ! owner_repo="$(_rss__origin_owner_repo "$origin_url")"; then
+      printf 'error: could not parse owner/repo from origin: %s\n' "$origin_url" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    # Only now mutate config/index/remote
+    if ! awk '
+      function ltrim(s){ sub(/^[ \t\r\n]+/, "", s); return s }
+      function rtrim(s){ sub(/[ \t\r\n]+$/, "", s); return s }
+      function trim(s){ return rtrim(ltrim(s)) }
+      {
+        line=$0
+        sub(/\r$/, "", line)
+        t=trim(line)
+        if (t ~ /^Host[ \t]+github\.com([ \t]|$)/ && t !~ /^#/) { found=1; exit }
+      }
+      END { exit found?0:1 }
+    ' "$cfg"; then
+      printf 'error: missing "Host github.com" entry in %s\n' "$cfg" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    if ! _rss__github_block_has_identityfile_for_key "$key_priv" "$key_base"; then
+      printf 'error: "Host github.com" does not reference IdentityFile %s\n' "$key_priv" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    {
+      printf '%s %s\n' "$cwd" "$key_name"
+    } >>"$repo_index" || {
+      printf 'error: could not write to %s\n' "$repo_index" >&2
+      _rss__exit 1
+      return $?
+    }
+
+    if ! _rss__sort_repo_index_by_path; then
+      printf 'error: failed to sort %s\n' "$repo_index" >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    if ! git remote set-url origin "git@github.com:${owner_repo}.git"; then
+      printf 'error: failed to set origin url\n' >&2
+      _rss__exit 1
+      return $?
+    fi
+
+    printf 'Repository registered in ssh config.\n'
   fi
+
   chmod 600 "$cfg" >/dev/null 2>&1 || true
+  chmod 600 "$repo_index" >/dev/null 2>&1 || true
 
-  printf 'Repository registered in ssh config.\n'
   _rss__exit 0
   return $?
 }
@@ -462,21 +762,34 @@ register-ssh-host() {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # -----------------------------------------------------------------------------
-# register-ssh-keys
+# create-github-keys
 #
-# Create a GitHub deploy-key pair and a matching Host entry in ~/.ssh/config.
-#
-# Notes (important with set -euo pipefail):
-# - Avoid pipelines that end with `head -c ...` because the upstream command can
-#   get SIGPIPE and return non-zero, which aborts the function under pipefail.
-#   Random generation here is implemented without "early-terminating" pipelines.
+# Create a GitHub deploy-key pair and add it as an extra IdentityFile under
+# the existing "Host github.com" entry in ~/.ssh/config (creating that entry
+# if missing).
 #
 # Usage:
-#   register-ssh-keys
+#   create-github-keys
 # -----------------------------------------------------------------------------
-register-ssh-keys() {
-  set -euo pipefail
+create-github-keys() {
+  set -uo pipefail
 
   local ssh_dir="$HOME/.ssh"
   local config_file="$ssh_dir/config"
@@ -489,7 +802,7 @@ register-ssh-keys() {
     return 1
   fi
 
-  # Prefer openssl for clean textual randomness; fall back to python if needed.
+  # Prefer openssl for clean textual randomness; fall back to python3 if needed.
   if ! command -v openssl >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
     echo "error: need either openssl or python3 to generate randomness" >&2
     return 1
@@ -508,9 +821,8 @@ register-ssh-keys() {
   fi
 
   _create_ssh_host_rand_digits_10() {
-    local out
+    local out=""
     if command -v openssl >/dev/null 2>&1; then
-      # hex -> digits (may be <10; loop)
       while :; do
         out="$(openssl rand -hex 16 | tr -cd '0-9')"
         if [[ ${#out} -ge 10 ]]; then
@@ -519,7 +831,6 @@ register-ssh-keys() {
         fi
       done
     else
-      # python: digits only
       python3 - <<'PY'
 import secrets, string
 alphabet = string.digits
@@ -528,35 +839,29 @@ PY
     fi
   }
 
-  _create_ssh_host_rand_alias_10() {
-    local out
-    if command -v openssl >/dev/null 2>&1; then
-      # base32 gives [A-Z2-7]=text; map to lowercase + digits and trim to 10.
-      # We loop to be safe in case mapping reduces length.
-      while :; do
-        out="$(openssl rand -base64 24 \
-          | tr -cd 'A-Za-z0-9' \
-          | tr 'A-Z' 'a-z')"
-        if [[ ${#out} -ge 10 ]]; then
-          printf '%s' "${out:0:10}"
-          return 0
-        fi
-      done
-    else
-      python3 - <<'PY'
-import secrets, string
-alphabet = string.ascii_lowercase + string.digits
-print("".join(secrets.choice(alphabet) for _ in range(10)))
-PY
-    fi
+  _squeeze_blank_lines_in_file() {
+    local file_path="$1"
+    local tmp_path
+    tmp_path="$(mktemp)"
+    awk '
+      BEGIN { blank = 0 }
+      /^[[:space:]]*$/ {
+        if (!blank) { print ""; blank = 1 }
+        next
+      }
+      { print; blank = 0 }
+    ' "$file_path" >"$tmp_path"
+    cat "$tmp_path" >"$file_path"
+    rm -f "$tmp_path"
   }
 
-  _create_ssh_host_sort_config_by_host_alias() {
+  _ensure_github_host_has_identityfile() {
     local cfg_path="$1"
+    local new_key_path="$2"
     local tmp_path
     tmp_path="$(mktemp)"
 
-    awk '
+    awk -v keypath="$new_key_path" '
       function flush_block() {
         if (in_block) {
           idx = ++n
@@ -566,6 +871,57 @@ PY
           cur_key = ""
           in_block = 0
         }
+      }
+
+      function add_identityfile_to_block(block,    i, line, out, saw_user, last_idf, inserted, already) {
+        split(block, L, "\n")
+        out = ""
+        saw_user = 0
+        last_idf = 0
+        inserted = 0
+        already = 0
+
+        for (i = 1; i <= length(L); i++) {
+          line = L[i]
+          if (line == "" && i == length(L)) continue
+
+          if (line ~ /^[[:space:]]*IdentityFile[[:space:]]+/) {
+            last_idf = i
+            if (line ~ ("(^|[[:space:]])" keypath "([[:space:]]|$)")) {
+              already = 1
+            }
+          }
+          if (line ~ /^[[:space:]]*User[[:space:]]+/) {
+            saw_user = 1
+          }
+        }
+
+        if (already) {
+          return block
+        }
+
+        # Insert after last IdentityFile, else after User, else after Host line.
+        for (i = 1; i <= length(L); i++) {
+          line = L[i]
+          if (line == "" && i == length(L)) continue
+
+          out = out line "\n"
+
+          if (!inserted) {
+            if (last_idf > 0 && i == last_idf) {
+              out = out "  IdentityFile " keypath "\n"
+              inserted = 1
+            } else if (last_idf == 0 && saw_user && line ~ /^[[:space:]]*User[[:space:]]+/) {
+              out = out "  IdentityFile " keypath "\n"
+              inserted = 1
+            } else if (last_idf == 0 && !saw_user && line ~ /^[[:space:]]*Host[[:space:]]+/) {
+              out = out "  IdentityFile " keypath "\n"
+              inserted = 1
+            }
+          }
+        }
+
+        return out
       }
 
       BEGIN {
@@ -604,17 +960,12 @@ PY
       END {
         flush_block()
 
-        for (i = 2; i <= n; i++) {
-          k = keys[i]
-          b = blocks[i]
-          j = i - 1
-          while (j >= 1 && keys[j] > k) {
-            keys[j+1] = keys[j]
-            blocks[j+1] = blocks[j]
-            j--
+        github_found = 0
+        for (i = 1; i <= n; i++) {
+          if (keys[i] == "github.com") {
+            blocks[i] = add_identityfile_to_block(blocks[i])
+            github_found = 1
           }
-          keys[j+1] = k
-          blocks[j+1] = b
         }
 
         printf "%s", preamble
@@ -622,13 +973,17 @@ PY
         for (i = 1; i <= n; i++) {
           gsub(/\n+$/, "\n", blocks[i])
           printf "%s", blocks[i]
-          if (i < n) {
-            printf "\n"
-          }
+          if (i < n) printf "\n"
         }
 
-        if (preamble == "" && n == 0) {
-          printf "\n"
+        if (!github_found) {
+          if (preamble != "" || n > 0) printf "\n"
+          printf "Host github.com\n"
+          printf "  HostName github.com\n"
+          printf "  User git\n"
+          printf "  IdentityFile %s\n", keypath
+          printf "  IdentitiesOnly yes\n"
+          printf "  StrictHostKeyChecking yes\n"
         }
       }
     ' "$cfg_path" >"$tmp_path"
@@ -637,62 +992,49 @@ PY
     rm -f "$tmp_path"
   }
 
-  # --- generate unique ddd + files ------------------------------------------
-  local ddd alias key_path pub_path comment host_header
+  # --- generate unique key name + files --------------------------------------
+  local digits key_path pub_path comment
 
   while :; do
-    ddd="$(_create_ssh_host_rand_digits_10)"
-    key_path="$ssh_dir/id_ed25519_${ddd}"
+    digits="$(_create_ssh_host_rand_digits_10)"
+    key_path="$ssh_dir/id_ed25519_${digits}"
     pub_path="${key_path}.pub"
-    if [[ ! -e "$key_path" && ! -e "$pub_path" ]]; then
-      break
+
+    # Avoid collisions with existing files
+    if [[ -e "$key_path" || -e "$pub_path" ]]; then
+      continue
     fi
-  done
 
-  # --- generate unique alias -------------------------------------------------
-  while :; do
-    alias="$(_create_ssh_host_rand_alias_10)"
-
+    # Avoid collisions with existing ~/.ssh/config references
     if [[ -f "$config_file" ]]; then
-      if grep -Eq "^[[:space:]]*Host[[:space:]]+$alias([[:space:]]+|$)" \
+      if grep -Eq "^[[:space:]]*IdentityFile[[:space:]]+.*id_ed25519_${digits}([[:space:]]+|$)" \
         "$config_file" 2>/dev/null; then
         continue
       fi
+      if grep -Eq "deploy-key-repo_${digits}([[:space:]]+|$)" "$config_file" 2>/dev/null; then
+        continue
+      fi
     fi
+
     break
   done
 
-  comment="deploy-key-repo_${ddd}"
+  comment="deploy-key-repo_${digits}"
 
   ssh-keygen -t ed25519 -C "$comment" -f "$key_path" -N "" >/dev/null
 
   chmod 600 "$key_path"
   chmod 644 "$pub_path"
 
-  # --- write config entry ----------------------------------------------------
+  # --- ensure config exists + add IdentityFile under Host github.com ----------
   if [[ ! -f "$config_file" ]]; then
     : >"$config_file"
   fi
   chmod 600 "$config_file"
 
-  host_header="Host $alias"
-
-  if [[ -s "$config_file" ]]; then
-    printf '\n' >>"$config_file"
-  fi
-
-  cat >>"$config_file" <<EOF
-$host_header
-  HostName github.com
-  User git
-  IdentityFile $key_path
-  IdentitiesOnly yes
-  StrictHostKeyChecking yes
-EOF
-
+  _ensure_github_host_has_identityfile "$config_file" "$key_path"
+  _squeeze_blank_lines_in_file "$config_file"
   chmod 600 "$config_file"
-
-  _create_ssh_host_sort_config_by_host_alias "$config_file"
 
   # --- print public key + next steps ----------------------------------------
   local pub_key
@@ -701,7 +1043,7 @@ EOF
   echo "Include the following public key in your GitHub repository (Settings → Deploy keys → Add deploy key):"
   echo "> PUBLIC KEY: $pub_key"
   echo "Then clone the repository, change directory to its root and run:"
-  echo "> register-ssh-host --alias=$alias"
+  echo "> register-github-repo --key=id_ed25519_${digits}"
 }
 
 
@@ -714,79 +1056,66 @@ EOF
 
 
 
+
+
+
+
+
+
+
+
+
+
 # -----------------------------------------------------------------------------
-# prune-ssh-config
+# prune-github-credentials
 #
-# Goals:
-# 1) Remove from ~/.ssh/config any "Host <alias>" block whose alias is NOT an
-#    absolute path to an existing directory on the system.
-# 2) If a block is removed, also delete the SSH key referenced by its IdentityFile
-#    (and its .pub), if any.
-# 3) Additionally, delete any deploy-key files under ~/.ssh that are NOT referenced
-#    by ANY remaining config entry.
-# 4) Ensure the resulting ~/.ssh/config has no two consecutive blank lines.
-#
-# Definitions:
-# - Alias = first token after "Host" on the Host line.
-# - A "valid directory alias" means alias begins with "/" AND test -d "$alias".
-# - "Referenced key" means the expanded path from an IdentityFile line in a kept
-#   Host block.
-#
-# Notes:
-# - Preserves the preamble (anything before the first Host line).
-# - Parses blocks starting at ^\s*Host\s+ through before next such line / EOF.
-# - Writes ~/.ssh/config atomically and enforces chmod 600.
-#
-# Usage:
-#   prune-ssh-config
+# Same behavior as before, but with improved messages:
+# - If any key is removed, print:
+#     Pruned ~/.ssh/github-repo-index and cleaned Host github.com IdentityFile keys.
+#     - <key1>
+#     - <key2>
+# - If no key is removed, print:
+#     Nothing to prune (github-repo-index has no invalid repo paths).
 # -----------------------------------------------------------------------------
-prune-ssh-config() {
-  set -euo pipefail
+prune-github-credentials() {
+  set -uo pipefail
 
   local ssh_dir="$HOME/.ssh"
   local config_file="$ssh_dir/config"
+  local repo_index="$ssh_dir/github-repo-index"
 
   if [[ ! -d "$ssh_dir" ]]; then
     echo "error: ~/.ssh not found" >&2
     return 1
   fi
-
+  if [[ ! -f "$repo_index" ]]; then
+    echo "error: ~/.ssh/github-repo-index not found" >&2
+    return 1
+  fi
   if [[ ! -f "$config_file" ]]; then
     echo "error: ~/.ssh/config not found" >&2
     return 1
   fi
-
+  if [[ ! -r "$repo_index" || ! -w "$repo_index" ]]; then
+    echo "error: ~/.ssh/github-repo-index is not readable/writable" >&2
+    ls -l "$repo_index" >&2 || true
+    return 1
+  fi
   if [[ ! -r "$config_file" || ! -w "$config_file" ]]; then
     echo "error: ~/.ssh/config is not readable/writable" >&2
     ls -l "$config_file" >&2 || true
     return 1
   fi
 
-  local tmp_file referenced_list
-  tmp_file="$(mktemp)"
-  referenced_list="$(mktemp)"
-
-  _prune_expand_identityfile() {
-    local raw="$1"
-    local expanded="$raw"
-
-    expanded="${expanded#"${expanded%%[![:space:]]*}"}"
-    expanded="${expanded%"${expanded##*[![:space:]]}"}"
-
-    if [[ "$expanded" == "~/"* ]]; then
-      expanded="$HOME/${expanded#~/}"
-    elif [[ "$expanded" == "~" ]]; then
-      expanded="$HOME"
-    fi
-
-    if [[ "$expanded" == "\$HOME/"* ]]; then
-      expanded="$HOME/${expanded#\$HOME/}"
-    elif [[ "$expanded" == "\$HOME" ]]; then
-      expanded="$HOME"
-    fi
-
-    printf '%s' "$expanded"
-  }
+  local tmp_repo tmp_cfg invalid_keys referenced_keys gh_keys gh_remove_keys
+  local removed_keys
+  tmp_repo="$(mktemp)"
+  tmp_cfg="$(mktemp)"
+  invalid_keys="$(mktemp)"
+  referenced_keys="$(mktemp)"
+  gh_keys="$(mktemp)"
+  gh_remove_keys="$(mktemp)"
+  removed_keys="$(mktemp)"
 
   _prune_rm_keypair_best_effort() {
     local key_path="$1"
@@ -802,136 +1131,233 @@ prune-ssh-config() {
     local path="$1"
     local tmp
     tmp="$(mktemp)"
-
-    # Collapse runs of blank lines to a single blank line.
-    # Keep all non-blank lines unchanged.
     awk '
       BEGIN { blank = 0 }
       /^[[:space:]]*$/ {
-        if (!blank) {
-          print ""
-          blank = 1
-        }
+        if (!blank) { print ""; blank = 1 }
         next
       }
-      {
-        print
-        blank = 0
-      }
+      { print; blank = 0 }
     ' "$path" >"$tmp"
-
     cat "$tmp" >"$path"
     rm -f "$tmp"
   }
 
-  # Extract preamble verbatim (everything before the first Host line).
-  awk '
-    $0 ~ /^[[:space:]]*Host[[:space:]]+/ { exit }
-    { print }
-  ' "$config_file" >"$tmp_file"
-
-  local block line alias raw_idfile expanded_idfile
-
-  block=""
-
-  _prune_flush_block() {
-    local alias_line
-
-    if [[ -z "$block" ]]; then
-      return 0
-    fi
-
-    alias_line="$(printf '%s' "$block" | awk '
-      $0 ~ /^[[:space:]]*Host[[:space:]]+/ {
-        sub(/^[[:space:]]*Host[[:space:]]+/, "", $0)
-        split($0, a, /[[:space:]]+/)
-        print a[1]
-        exit
-      }
-    ')"
-    alias="${alias_line:-}"
-
-    raw_idfile="$(printf '%s' "$block" | awk '
-      $0 ~ /^[[:space:]]*IdentityFile[[:space:]]+/ {
-        sub(/^[[:space:]]*IdentityFile[[:space:]]+/, "", $0)
-        print $0
-        exit
-      }
-    ')"
-
-    expanded_idfile=""
-    if [[ -n "${raw_idfile:-}" ]]; then
-      expanded_idfile="$(_prune_expand_identityfile "$raw_idfile")"
-    fi
-
-    if [[ -n "$alias" && "$alias" == /* && -d "$alias" ]]; then
-      if [[ -s "$tmp_file" ]]; then
-        printf '\n' >>"$tmp_file"
-      fi
-      printf '%s' "$block" >>"$tmp_file"
-      if [[ "${block: -1}" != $'\n' ]]; then
-        printf '\n' >>"$tmp_file"
-      fi
-
-      if [[ -n "$expanded_idfile" ]]; then
-        printf '%s\n' "$expanded_idfile" >>"$referenced_list"
-      fi
-
-      block=""
-      return 0
-    fi
-
-    if [[ -n "$expanded_idfile" ]]; then
-      _prune_rm_keypair_best_effort "$expanded_idfile"
-    fi
-
-    block=""
-    return 0
+  _prune_sort_uniq_file() {
+    local path="$1"
+    local tmp
+    tmp="$(mktemp)"
+    awk 'NF { print }' "$path" | sort -u >"$tmp" 2>/dev/null || true
+    cat "$tmp" >"$path"
+    rm -f "$tmp"
   }
 
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$line" =~ ^[[:space:]]*Host[[:space:]]+ ]]; then
-      _prune_flush_block
-      block="${line}"$'\n'
-    else
-      if [[ -n "$block" ]]; then
-        block+="${line}"$'\n'
-      fi
-    fi
-  done <"$config_file"
+  # -----------------------------------------
+  # 1) Prune github-repo-index invalid paths -> invalid_keys
+  # 2) Build referenced_keys from remaining lines
+  # -----------------------------------------
+  awk -v ssh_dir="$ssh_dir" -v out_invalid="$invalid_keys" -v out_ref="$referenced_keys" '
+    function trim(s) { sub(/^[ \t\r\n]+/, "", s); sub(/[ \t\r\n]+$/, "", s); return s }
+    /^[[:space:]]*$/ { next }
+    /^[[:space:]]*#/ { next }
+    {
+      repo = $1
+      key  = $2
+      repo = trim(repo)
+      key  = trim(key)
+      if (repo == "" || key == "") {
+        next
+      }
 
-  _prune_flush_block
+      if (substr(repo, 1, 1) != "/") {
+        print ssh_dir "/" key >> out_invalid
+        next
+      }
 
-  # Collapse multiple blank lines in the newly-built config before writing back.
-  _prune_compress_blank_lines_file "$tmp_file"
+      cmd = "[ -d \"" repo "\" ]"
+      rc = system(cmd)
+      if (rc != 0) {
+        print ssh_dir "/" key >> out_invalid
+        next
+      }
 
-  cat "$tmp_file" >"$config_file"
-  rm -f "$tmp_file"
-  chmod 600 "$config_file" 2>/dev/null || true
+      print repo " " key
+      print ssh_dir "/" key >> out_ref
+    }
+  ' "$repo_index" >"$tmp_repo"
 
-  # Remove any deploy keys not referenced by kept entries.
-  sort -u "$referenced_list" -o "$referenced_list" 2>/dev/null || true
+  _prune_sort_uniq_file "$invalid_keys"
+  _prune_sort_uniq_file "$referenced_keys"
 
-  local key_file
-  shopt -s nullglob
-  for key_file in "$ssh_dir"/id_ed25519_repo_*; do
-    if [[ "$key_file" == *.pub ]]; then
-      continue
-    fi
-    if [[ ! -f "$key_file" ]]; then
-      continue
-    fi
-    if ! grep -Fxq -- "$key_file" "$referenced_list" 2>/dev/null; then
-      _prune_rm_keypair_best_effort "$key_file"
-    fi
-  done
-  shopt -u nullglob
+  cat "$tmp_repo" >"$repo_index"
+  rm -f "$tmp_repo"
 
-  rm -f "$referenced_list"
+  # Delete keys tied to invalid repo paths (and record them).
+  if [[ -s "$invalid_keys" ]]; then
+    while IFS= read -r key_path || [[ -n "${key_path:-}" ]]; do
+      [[ -n "${key_path:-}" ]] || continue
+      printf '%s\n' "$key_path" >>"$removed_keys"
+      _prune_rm_keypair_best_effort "$key_path"
+    done <"$invalid_keys"
+  fi
 
-  # Final pass: ensure no consecutive blank lines in the final config.
+  # -----------------------------------------
+  # Collect IdentityFile keys from Host github.com (expanded paths)
+  # -----------------------------------------
+  awk '
+    BEGIN { in_github = 0 }
+
+    function ltrim(s) { sub(/^[ \t]+/, "", s); return s }
+    function rtrim(s) { sub(/[ \t]+$/, "", s); return s }
+    function trim(s)  { return rtrim(ltrim(s)) }
+
+    function expand_home(p,  q) {
+      q = trim(p)
+      sub(/[ \t]+#.*/, "", q)
+
+      if (q ~ /^~\//) {
+        q = ENVIRON["HOME"] "/" substr(q, 3)
+      } else if (q == "~") {
+        q = ENVIRON["HOME"]
+      } else if (q ~ /^\$HOME\//) {
+        q = ENVIRON["HOME"] "/" substr(q, 7)
+      } else if (q == "$HOME") {
+        q = ENVIRON["HOME"]
+      }
+      return q
+    }
+
+    /^[[:space:]]*Host[[:space:]]+/ {
+      line = $0
+      sub(/^[[:space:]]*Host[[:space:]]+/, "", line)
+      split(line, a, /[[:space:]]+/)
+      alias = a[1]
+      in_github = (alias == "github.com") ? 1 : 0
+      next
+    }
+
+    {
+      if (in_github && $0 ~ /^[[:space:]]*IdentityFile[[:space:]]+/) {
+        line = $0
+        sub(/^[[:space:]]*IdentityFile[[:space:]]+/, "", line)
+        p = expand_home(line)
+        if (p != "") print p
+      }
+    }
+  ' "$config_file" >"$gh_keys"
+  _prune_sort_uniq_file "$gh_keys"
+
+  # -----------------------------------------
+  # Determine which github.com keys to remove:
+  # - keys in invalid_keys
+  # - keys not present in referenced_keys (i.e., unreferenced)
+  # -----------------------------------------
+  : >"$gh_remove_keys"
+  if [[ -s "$invalid_keys" ]]; then
+    cat "$invalid_keys" >>"$gh_remove_keys"
+  fi
+
+  awk -v refs="$referenced_keys" -v ssh_dir="$ssh_dir" '
+    BEGIN {
+      while ((getline r < refs) > 0) {
+        gsub(/^[ \t]+|[ \t]+$/, "", r)
+        if (r != "") ref[r] = 1
+      }
+      close(refs)
+    }
+    {
+      k = $0
+      if (k ~ ("^" ssh_dir "/id_ed25519_")) {
+        if (!(k in ref)) {
+          print k
+        }
+      }
+    }
+  ' "$gh_keys" >>"$gh_remove_keys"
+
+  _prune_sort_uniq_file "$gh_remove_keys"
+
+  # -----------------------------------------
+  # Remove those IdentityFile lines from Host github.com in config
+  # -----------------------------------------
+  awk -v rmfile="$gh_remove_keys" '
+    BEGIN {
+      in_github = 0
+      while ((getline k < rmfile) > 0) {
+        gsub(/^[ \t]+|[ \t]+$/, "", k)
+        if (k != "") rm[k] = 1
+      }
+      close(rmfile)
+    }
+
+    function ltrim(s) { sub(/^[ \t]+/, "", s); return s }
+    function rtrim(s) { sub(/[ \t]+$/, "", s); return s }
+    function trim(s)  { return rtrim(ltrim(s)) }
+
+    function expand_home(p,  q) {
+      q = trim(p)
+      sub(/[ \t]+#.*/, "", q)
+      if (q ~ /^~\//) {
+        q = ENVIRON["HOME"] "/" substr(q, 3)
+      } else if (q == "~") {
+        q = ENVIRON["HOME"]
+      } else if (q ~ /^\$HOME\//) {
+        q = ENVIRON["HOME"] "/" substr(q, 7)
+      } else if (q == "$HOME") {
+        q = ENVIRON["HOME"]
+      }
+      return q
+    }
+
+    /^[[:space:]]*Host[[:space:]]+/ {
+      line = $0
+      sub(/^[[:space:]]*Host[[:space:]]+/, "", line)
+      split(line, a, /[[:space:]]+/)
+      alias = a[1]
+      in_github = (alias == "github.com") ? 1 : 0
+      print
+      next
+    }
+
+    {
+      if (in_github && $0 ~ /^[[:space:]]*IdentityFile[[:space:]]+/) {
+        line = $0
+        sub(/^[[:space:]]*IdentityFile[[:space:]]+/, "", line)
+        p = expand_home(line)
+        if (p in rm) {
+          next
+        }
+      }
+      print
+    }
+  ' "$config_file" >"$tmp_cfg"
+
+  cat "$tmp_cfg" >"$config_file"
+  rm -f "$tmp_cfg"
+
   _prune_compress_blank_lines_file "$config_file"
   chmod 600 "$config_file" 2>/dev/null || true
 
-  echo "Pruned ~/.ssh/config and removed unreferenced deploy keys."
+  # Delete github.com keys that are now unreferenced/invalid (and record them).
+  if [[ -s "$gh_remove_keys" ]]; then
+    while IFS= read -r key_path || [[ -n "${key_path:-}" ]]; do
+      [[ -n "${key_path:-}" ]] || continue
+      printf '%s\n' "$key_path" >>"$removed_keys"
+      _prune_rm_keypair_best_effort "$key_path"
+    done <"$gh_remove_keys"
+  fi
+
+  _prune_sort_uniq_file "$removed_keys"
+
+  if [[ -s "$removed_keys" ]]; then
+    echo "Pruned ~/.ssh/github-repo-index and cleaned Host github.com IdentityFile keys."
+    while IFS= read -r key_path || [[ -n "${key_path:-}" ]]; do
+      [[ -n "${key_path:-}" ]] || continue
+      printf -- "- %s\n" "$key_path"
+    done <"$removed_keys"
+  else
+    echo "Nothing to prune (github-repo-index has no invalid repo paths)."
+  fi
+
+  rm -f "$invalid_keys" "$referenced_keys" "$gh_keys" "$gh_remove_keys" "$removed_keys"
 }
