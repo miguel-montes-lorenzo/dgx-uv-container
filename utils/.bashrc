@@ -178,4 +178,3 @@ prune-github-credentials >/dev/null 2>&1 || true
 # Ensure errexit is disabled in interactive shells to prevent the session from
 # exiting when a command returns a non-zero status
 set +o errexit
-

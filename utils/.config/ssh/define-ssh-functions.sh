@@ -136,6 +136,22 @@ register-github-repo() {
   fi
   chmod 600 "$repo_index" >/dev/null 2>&1 || true
 
+  # --------------------------------------------------------------------------
+  # Ensure GitHub host key is present when StrictHostKeyChecking yes is used.
+  # This prevents first-run failures when ~/.ssh/known_hosts does not exist.
+  # --------------------------------------------------------------------------
+  local known_hosts="$ssh_dir/known_hosts"
+  if [[ ! -e "$known_hosts" ]]; then
+    : >"$known_hosts" >/dev/null 2>&1 || true
+  fi
+  chmod 600 "$known_hosts" >/dev/null 2>&1 || true
+  if command -v ssh-keyscan >/dev/null 2>&1; then
+    if ! ssh-keygen -F github.com -f "$known_hosts" >/dev/null 2>&1; then
+      ssh-keyscan -t ed25519 github.com >>"$known_hosts" 2>/dev/null || true
+      chmod 600 "$known_hosts" >/dev/null 2>&1 || true
+    fi
+  fi
+
   _rss__origin_owner_repo() {
     local origin_url="$1"
     local s="$origin_url"
@@ -504,9 +520,6 @@ register-github-repo() {
       return $?
     fi
 
-    # IMPORTANT FIX:
-    # Do not call register-github-repo --key=... here, because that would prune
-    # the just-created key before it is referenced in github-repo-index.
     local cwd_remote=""
     cwd_remote="$(pwd -P)"
 
@@ -567,7 +580,6 @@ register-github-repo() {
   local key_pub=""
 
   if [[ -z "$key_arg" ]]; then
-    # Directory-origin checks first (NO KEY CREATION BEFORE THESE)
     if _rss__repo_index_has_path "$cwd"; then
       printf 'error: %s already has an entry in %s\n' "$cwd" "$repo_index" >&2
       _rss__exit 1
@@ -589,7 +601,6 @@ register-github-repo() {
       return $?
     fi
 
-    # Only now create key
     local key_id=""
     while :; do
       key_id="$(LC_ALL=C tr -dc '0-9' </dev/urandom | head -c 10)"
@@ -660,7 +671,6 @@ register-github-repo() {
     local key_base=""
     key_base="$(basename -- "$key_name")"
 
-    # Directory checks first (NO MODIFICATIONS BEFORE THESE)
     if [[ ! -f "$key_priv" ]]; then
       printf 'error: ssh key not found: %s\n' "$key_priv" >&2
       _rss__exit 1
@@ -698,7 +708,6 @@ register-github-repo() {
       return $?
     fi
 
-    # Only now mutate config/index/remote
     if ! awk '
       function ltrim(s){ sub(/^[ \t\r\n]+/, "", s); return s }
       function rtrim(s){ sub(/[ \t\r\n]+$/, "", s); return s }
@@ -751,6 +760,7 @@ register-github-repo() {
   _rss__exit 0
   return $?
 }
+
 
 
 
