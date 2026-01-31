@@ -17,8 +17,8 @@
 # set -euo pipefail
 set -uo pipefail
 
-UVSHIM="$HOME/.local/uv-shims"
-mkdir -p "$UVSHIM"
+UV_SHIM_DIR="$HOME/.local/uv-shims"
+mkdir -p "$UV_SHIM_DIR"
 
 # -------------------------
 # Helpers (host script)
@@ -54,24 +54,183 @@ TIMEOUT_BIN="$(command -v timeout 2>/dev/null || true)"
 _tmo1() { [[ -n "$TIMEOUT_BIN" ]] && "$TIMEOUT_BIN" 1s "$@" || "$@"; }
 _tmo2() { [[ -n "$TIMEOUT_BIN" ]] && "$TIMEOUT_BIN" 2s "$@" || "$@"; }
 
+
+# -------------------------
+# _uv_install_python (shim): ensure required python exists (interactive)
+# -------------------------
+cat > "$UV_SHIM_DIR/_uv_install_python" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+_is_tty() {
+  [[ -t 0 && -t 1 ]]
+}
+
+_prompt_yn() {
+  local prompt="${1:?}"
+  local ans=""
+  while true; do
+    printf '%s' "${prompt}" >/dev/tty
+    IFS= read -r ans </dev/tty || ans=""
+    case "${ans}" in
+      y|Y) echo "y"; return 0 ;;
+      n|N) echo "n"; return 0 ;;
+      *) ;;
+    esac
+  done
+}
+
+_find_boundary_root() {
+  local d=""
+  d="$(pwd -P 2>/dev/null || pwd)"
+  while true; do
+    if [[ -f "${d}/pyproject.toml" || -f "${d}/uv.toml" || -d "${d}/.git" ]]; then
+      printf '%s\n' "${d}"
+      return 0
+    fi
+    if [[ "${d}" == "/" ]]; then
+      printf '/\n'
+      return 0
+    fi
+    d="$(dirname -- "${d}")"
+  done
+}
+
+_first_pin_in_dir_chain() {
+  local root="${1:?}"
+  local d=""
+  local f=""
+
+  d="$(pwd -P 2>/dev/null || pwd)"
+  while true; do
+    for f in "${d}/.python-versions" "${d}/.python-version"; do
+      if [[ -f "${f}" ]]; then
+        sed -n 's/[[:space:]]*$//; /^[[:space:]]*#/d; /^[[:space:]]*$/d; 1p' "${f}" \
+          || true
+        return 0
+      fi
+    done
+
+    if [[ "${d}" == "${root}" || "${d}" == "/" ]]; then
+      return 1
+    fi
+    d="$(dirname -- "${d}")"
+  done
+}
+
+_any_python_exists() {
+  # Align detection with what shims will actually do, but without downloads.
+  # If uv can't run python quickly, treat as "no interpreter installed".
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 1s env UV_PYTHON_DOWNLOADS=never uv --no-progress run python -V \
+      >/dev/null 2>&1
+    return $?
+  fi
+
+  env UV_PYTHON_DOWNLOADS=never uv --no-progress run python -V >/dev/null 2>&1
+}
+
+_pin_python_exists() {
+  local pin="${1:?}"
+
+  # Check if a Python matching the pin is already available without downloading.
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 1s env UV_PYTHON_DOWNLOADS=never uv --no-progress python find "${pin}" \
+      >/dev/null 2>&1
+    return $?
+  fi
+
+  env UV_PYTHON_DOWNLOADS=never uv --no-progress python find "${pin}" >/dev/null 2>&1
+}
+
+_install_requested() {
+  local req="${1:?}"
+  uv --no-progress python install "${req}"
+}
+
+_install_latest_stable() {
+  uv --no-progress --no-config python install
+}
+
+_uv_install_python() {
+  if ! _is_tty; then
+    return 0
+  fi
+
+  local root=""
+  local pin=""
+  root="$(_find_boundary_root)"
+  pin="$(_first_pin_in_dir_chain "${root}" 2>/dev/null || true)"
+
+  if [[ -n "${pin}" ]]; then
+    # If the pinned interpreter is already installed, don't prompt.
+    if _pin_python_exists "${pin}"; then
+      return 0
+    fi
+
+    local ans=""
+    ans="$(_prompt_yn "This project requires Python version ${pin}. Do you want to install it? [y/n]: ")"
+    if [[ "${ans}" == "y" ]]; then
+      _install_requested "${pin}"
+      return 0
+    fi
+    return 1
+  fi
+
+  if _any_python_exists; then
+    return 0
+  fi
+
+  # Only ask to install latest stable if explicitly enabled.
+  if [[ "${ASK_TO_INSTALL_PYTHON:-false}" != "true" ]]; then
+    return 0
+  fi
+
+  while true; do
+    case "$(_prompt_yn "No Python interpreter installed. Do you want to install latest stable version? [y/n]: ")" in
+      y)
+        _install_latest_stable
+        return 0
+        ;;
+      n)
+        return 1
+        ;;
+    esac
+  done
+}
+
+_uv_install_python "$@"
+EOF
+chmod +x "$UV_SHIM_DIR/_uv_install_python"
+
+
+
 # -------------------------
 # python (via uv run; resolves stable interpreter)
 # -------------------------
-cat > "$UVSHIM/python" << 'EOF'
+cat > "$UV_SHIM_DIR/python" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+UV_SHIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+env ASK_TO_INSTALL_PYTHON=true "${UV_SHIM_DIR}/_uv_install_python" || exit 1
+
 PY="$(uv run python -c 'import sys; print(sys.executable)')"
 exec uv run --python "$PY" python "$@"
 EOF
-chmod +x "$UVSHIM/python"
+chmod +x "$UV_SHIM_DIR/python"
 
 
 # -------------------------
 # pip (maps to uv pip; accepts -p/--python)
 # -------------------------
-cat > "$UVSHIM/pip" << 'EOF'
+cat > "$UV_SHIM_DIR/pip" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+UV_SHIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+env ASK_TO_INSTALL_PYTHON=true "${UV_SHIM_DIR}/_uv_install_python" || exit 1
+
 ARGS=(); PY=""
 while [[ $# -gt 0 ]]; do
   case "${1-}" in
@@ -85,16 +244,19 @@ if [[ -z "$PY" ]]; then
 fi
 exec uv pip --no-progress "${ARGS[@]}" --python "$PY"
 EOF
-chmod +x "$UVSHIM/pip"
+chmod +x "$UV_SHIM_DIR/pip"
 
 
 
 # -------------------------
 # version (two lines; matches uv resolver or active venv)
 # -------------------------
-cat > "$UVSHIM/version" << 'EOF'
+cat > "$UV_SHIM_DIR/version" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+UV_SHIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+env ASK_TO_INSTALL_PYTHON=true "${UV_SHIM_DIR}/_uv_install_python" || exit 1
 
 # 1) uv version
 uv self version
@@ -146,7 +308,7 @@ fi
 
 echo "Python (none)"
 EOF
-chmod +x "$UVSHIM/version"
+chmod +x "$UV_SHIM_DIR/version"
 
 
 
@@ -158,6 +320,7 @@ chmod +x "$UVSHIM/version"
 # venv (function): create/activate venv
 # -------------------------
 venv() {
+
     local _is_interactive="0"
     case "$-" in *i*) _is_interactive="1" ;; esac
 
@@ -167,10 +330,45 @@ venv() {
         set -euo pipefail
     fi
 
+    local _was_history="off"
+    if [[ "$(set -o | awk '$1=="history"{print $2; exit}')" == "on" ]]; then
+        _was_history="on"
+    fi
+
+    # Prevent `eval` restore from polluting interactive history.
+    # Remove history toggles from the saved option script and restore history separately.
+    local _old_opts_nohist=""
+    _old_opts_nohist="$(printf '%s\n' "${_old_opts}" | sed '/^set [+-]o history$/d')"
+
+    _restore_opts() {
+        local opts="${1:?}"
+        local was_history="${2:?}"
+
+        # Disable history while applying many `set` commands.
+        set +o history
+        eval "${opts}"
+
+        if [[ "${was_history}" == "on" ]]; then
+            set -o history
+        else
+            set +o history
+        fi
+    }
+
+    if command -v _uv_install_python >/dev/null 2>&1; then
+        _uv_install_python || { _restore_opts "${_old_opts_nohist}" "${_was_history}"; return 1; }
+    else
+        local _shim_dir=""
+        _shim_dir="${HOME}/.local/uv-shims"
+        if [[ -x "${_shim_dir}/_uv_install_python" ]]; then
+            "${_shim_dir}/_uv_install_python" || { _restore_opts "${_old_opts_nohist}" "${_was_history}"; return 1; }
+        fi
+    fi
+
     if [[ -n "${VIRTUAL_ENV:-}" ]]; then
         printf '[venv] Already inside a virtual environment: %s\n' \
             "${VIRTUAL_ENV}" 1>&2
-        eval "${_old_opts}"
+        _restore_opts "${_old_opts_nohist}" "${_was_history}"
         return 0
     fi
 
@@ -183,7 +381,7 @@ venv() {
                 shift || true
                 if [[ $# -le 0 ]]; then
                     printf '[ERROR] missing value for --python\n' 1>&2
-                    eval "${_old_opts}"
+                    _restore_opts "${_old_opts_nohist}" "${_was_history}"
                     return 1
                 fi
                 py="${1-}"
@@ -195,7 +393,7 @@ venv() {
                 ;;
             -*)
                 printf '[ERROR] unknown option: %s\n' "${1-}" 1>&2
-                eval "${_old_opts}"
+                _restore_opts "${_old_opts_nohist}" "${_was_history}"
                 return 1
                 ;;
             *)
@@ -236,7 +434,7 @@ venv() {
 
     if [[ ! -f "${activate_path}" ]]; then
         printf '[ERROR] expected %s not found\n' "${activate_path}" 1>&2
-        eval "${_old_opts}"
+        _restore_opts "${_old_opts_nohist}" "${_was_history}"
         return 1
     fi
 
@@ -257,7 +455,7 @@ venv() {
     fi
     # ---------------------------------------
 
-    eval "${_old_opts}"
+    _restore_opts "${_old_opts_nohist}" "${_was_history}"
 }
 
 
@@ -275,9 +473,12 @@ venv() {
 # -------------------------
 # lpin (local pin)
 # -------------------------
-cat > "$UVSHIM/lpin" << 'EOF'
+cat > "$UV_SHIM_DIR/lpin" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+UV_SHIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+env ASK_TO_INSTALL_PYTHON=true "${UV_SHIM_DIR}/_uv_install_python" || exit 1
 
 # If a version is provided, pin it here first.
 if [[ $# -gt 0 ]]; then
@@ -320,15 +521,19 @@ else
   echo "(none)"
 fi
 EOF
-chmod +x "$UVSHIM/lpin"
+chmod +x "$UV_SHIM_DIR/lpin"
 
 
 # -------------------------
 # gpin (global pin)
 # -------------------------
-cat > "$UVSHIM/gpin" << 'EOF'
+cat > "$UV_SHIM_DIR/gpin" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+UV_SHIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+env ASK_TO_INSTALL_PYTHON=true "${UV_SHIM_DIR}/_uv_install_python" || exit 1
+
 if [[ $# -gt 0 ]]; then uv python pin "$1" --global >/dev/null; fi
 for c in \
   "${XDG_CONFIG_HOME:-$HOME/.config}/uv/.python-version" \
@@ -339,14 +544,17 @@ do
 done
 echo "(none)"
 EOF
-chmod +x "$UVSHIM/gpin"
+chmod +x "$UV_SHIM_DIR/gpin"
 
 # -------------------------
 # interpreters (fast + resilient; patch-level; dedup; smart star)
 # -------------------------
-cat > "$UVSHIM/interpreters" << 'EOF'
+cat > "$UV_SHIM_DIR/interpreters" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+UV_SHIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+env ASK_TO_INSTALL_PYTHON=true "${UV_SHIM_DIR}/_uv_install_python" || exit 1
 
 TIMEOUT_BIN="$(command -v timeout 2>/dev/null || true)"
 tmo1() { [[ -n "$TIMEOUT_BIN" ]] && "$TIMEOUT_BIN" 1s "$@" || "$@"; }
@@ -502,7 +710,7 @@ for i in "${KEYS[@]}"; do
   printf "%s %s %s\n" "$mark" "${SHORTS[i]}" "${PATHS[i]}"
 done
 EOF
-chmod +x "$UVSHIM/interpreters"
+chmod +x "$UV_SHIM_DIR/interpreters"
 
 
 
@@ -514,9 +722,12 @@ chmod +x "$UVSHIM/interpreters"
 # -------------------------
 # uncache (shim): uncache uv cache using hardlink GC + venv-installed wheels keep
 # -------------------------
-cat > "$UVSHIM/uncache" << 'EOF'
+cat > "$UV_SHIM_DIR/uncache" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+UV_SHIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+env ASK_TO_INSTALL_PYTHON=false "${UV_SHIM_DIR}/_uv_install_python" || exit 1
 
 : "${UV_CACHE_DIR:=$HOME/.cache/uv}"
 
@@ -728,7 +939,11 @@ done
 
 log "Done."
 EOF
-chmod +x "$UVSHIM/uncache"
+chmod +x "$UV_SHIM_DIR/uncache"
+
+
+
+
 
 
 
@@ -739,7 +954,7 @@ chmod +x "$UVSHIM/uncache"
 # -------------------------
 # lock (shim): promote active venv to pyproject + uv lock (names only)
 # -------------------------
-cat > "$UVSHIM/lock" << 'EOF'
+cat > "$UV_SHIM_DIR/lock" << 'EOF'
 #!/usr/bin/env bash
 # lock — promote active venv deps to pyproject.toml (names only) and run `uv lock`
 #
@@ -753,8 +968,33 @@ cat > "$UVSHIM/lock" << 'EOF'
 # Requirements:
 # - Active environment (VIRTUAL_ENV set)
 # - uv available in PATH
+#
+# Optional:
+# --requirements=true|false
+#   true  -> also create requirements.txt with installed package pins (name==version)
+#   false -> do not create requirements.txt (default)
 
 set -euo pipefail
+
+UV_SHIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+env ASK_TO_INSTALL_PYTHON=true "${UV_SHIM_DIR}/_uv_install_python" || exit 1
+
+requirements="false"
+for arg in "$@"; do
+  case "$arg" in
+    --requirements=*)
+      requirements="${arg#*=}"
+      if [[ "$requirements" != "true" && "$requirements" != "false" ]]; then
+        echo "error: --requirements must be true or false (got: $requirements)" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "error: unknown argument: $arg" >&2
+      exit 1
+      ;;
+  esac
+done
 
 if [[ -z "${VIRTUAL_ENV:-}" ]]; then
   echo "error: no active environment (VIRTUAL_ENV is not set)" >&2
@@ -881,6 +1121,41 @@ fallback_name_from_metadata_dir_basename() {
   normalize_name "$base"
 }
 
+version_from_metadata() {
+  # Args:
+  #   $1: normalized package name
+  # Prints version or returns non-zero.
+  local name="${1:?}"
+  local sp=""
+  local vline=""
+
+  while IFS= read -r sp; do
+    # dist-info (try normalized-name with underscores as it often appears on disk)
+    vline="$(
+      find "$sp" -maxdepth 1 -type d -iname "${name//-/_}-*.dist-info" \
+        -exec sh -c 'grep -m1 "^Version:" "$1/METADATA" 2>/dev/null' _ {} \; \
+        | head -n1
+    )"
+    if [[ -n "$vline" ]]; then
+      printf '%s\n' "${vline#Version: }"
+      return 0
+    fi
+
+    # egg-info (dir or file)
+    vline="$(
+      find "$sp" -maxdepth 1 \( -type d -o -type f \) -iname "${name//-/_}*.egg-info" \
+        -exec sh -c 'grep -m1 "^Version:" "$1/PKG-INFO" 2>/dev/null || grep -m1 "^Version:" "$1" 2>/dev/null' _ {} \; \
+        | head -n1
+    )"
+    if [[ -n "$vline" ]]; then
+      printf '%s\n' "${vline#Version: }"
+      return 0
+    fi
+  done <<<"$site_dirs"
+
+  return 1
+}
+
 # ----------------------------------------------------------------------
 # Ensure pyproject.toml exists at venv-level directory
 # ----------------------------------------------------------------------
@@ -993,12 +1268,41 @@ if [[ -s "$tmp_cuda" ]]; then
   xargs -a "$tmp_cuda" -n 50 uv add --raw --optional cuda --no-sync -- >/dev/null
 fi
 
+if [[ "$requirements" == "true" ]]; then
+  : > requirements.txt
+  while IFS= read -r name; do
+    if [[ -z "$name" ]]; then
+      continue
+    fi
+    version="$(version_from_metadata "$name")" || {
+      echo "error: could not determine version for $name" >&2
+      exit 1
+    }
+    printf '%s==%s\n' "$name" "$version" >> requirements.txt
+  done < <(cat "$tmp_main" "$tmp_cuda" | LC_ALL=C sort -u)
+
+  echo "Wrote requirements.txt (pinned versions)"
+fi
+
 echo "Running: uv lock"
 uv lock
 
 echo "Done."
 EOF
-chmod +x "$UVSHIM/lock"
+chmod +x "$UV_SHIM_DIR/lock"
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
