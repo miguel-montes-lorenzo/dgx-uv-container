@@ -18,13 +18,21 @@ A Docker container for Python development on DGX systems, based on Ubuntu and pr
 
 **Usage**
 
-Start the compose (single container named: "${USER}-session"):
+Define the following shell aliases to simplify the usage of the container helper scripts. It is recommended to add these lines to your host `~/.bashrc` (or equivalent shell configuration file) so they are always available.
+
 ```bash
-source up.sh
+alias up="chmod +x ./up.sh && ./up.sh"
+alias attach="chmod +x ./attach.sh && ./attach.sh"
+alias down="chmod +x ./down.sh && ./down.sh"
+```
+
+Start the compose (single container named: `${USER}-session`):
+```bash
+up
 ```
 Attach to a terminal session of the container:
 ```bash
-source attach.sh
+attach
 ```
 Inside the container, save inside ~/data the files to be kept persistently:
 ```bash
@@ -41,7 +49,7 @@ exit
 ```
 Stop the compose and remove the container:
 ```bash
-source down.sh
+down
 ```
 
 
@@ -81,20 +89,90 @@ The behavior of the container and its persistence model is controlled via `varia
 These variables define the container’s user, persistence layout, and session isolation.
 
 
-## Cusom shims to manage uv
-- **version**: shown both uv and python versions
-- **python**: runs [uv python --python \<uv python selected interpreter\>]
-- **pip**: runs [uv pip] or [uv python --python \<uv python selected interpreter\> -m pip] if inside standard Python venv
-- **venv**: runs [uv venv .venv && source .venv/bin/activate] or just [source .venv/bin/activate] if environment already exist in cwd
-- **gpin**: shows globally pinned Python interpreter version
-- **gpin** <python interpreter path / python version>: pins Python interpreter globally
-- **gpin** none: unpins globally pinned Python interpreter
-- **lpin**: shows locally pinned Python interpreter version
-- **lpin** <python interpreter path / python version>: pins Python interpreter locally
-- **lpin** none: unpins locally pinned Python interpreter
-- **interpreters**: shows all installed Python interpreters (marks with (*) uv python selected one)
-- **uncache**: cleans from the uv cache python dependencies unreferenced by uv-manged environments
-- **lock**: dumps dependencies installed in the active environment into `pyproject.toml` and `uv.lock`
+## UV shims (command wrappers)
+
+This project installs small command wrappers (“shims”) into `~/.local/uv-shims` and prepends that directory to `PATH`. They are designed to make `uv` behave like a drop-in replacement for standard Python tooling, while consistently respecting pins and virtual environments.
+
+### `python`
+
+Runs Python via `uv run`, explicitly binding execution to the interpreter resolved by `uv`. This avoids ambiguity between system Pythons, uv-managed interpreters, and active pins. If the project requires a pinned Python version that is not installed, it may prompt to install it interactively.
+
+
+
+### `pip`
+
+Thin wrapper around `uv pip`, always operating on an explicitly selected interpreter.
+
+* `-p, --python <path|version>`: select the interpreter explicitly
+* if not provided, the interpreter resolved by `uv run python` is used
+
+
+
+### `version`
+
+Prints two lines: the `uv` version and the Python version. Python resolution follows this order: active virtual environment, `uv run` (with downloads disabled), system fallback, or `Python (none)` if nothing is available.
+
+
+
+### `venv`
+
+Shell function to create and/or activate a virtual environment in the current directory (default: `.venv`). If a venv already exists, it is simply activated; if you are already inside a venv, it refuses to nest. The prompt is adjusted to match `uv venv` behavior.
+
+* `venv <dir>`: use a custom venv directory instead of `.venv`
+* `-p, --python <path|version>`: select the interpreter for venv creation
+
+
+
+### `lpin`
+
+Shows or manages the **local** Python pin (`.python-version`) by walking up the directory tree.
+
+* `lpin`:
+
+  * prints `<version>` if pinned in the current directory
+  * prints `(~path) <version>` if inherited from a parent
+  * prints `(none)` if no local pin exists
+* `lpin <path|version>`: set or update the local pin
+
+
+
+### `gpin`
+
+Shows or manages the **global** Python pin.
+
+* `gpin`: prints the global pin or `(none)`
+* `gpin <path|version>`: set the global pin
+* `gpin none`: remove the global pin
+
+
+
+### `interpreters`
+
+Lists all detected Python interpreters at patch level (`cpython-X.Y.Z <path>`), marking one with `*`. Preference order is: current interpreter resolved by `uv run`, exact pinned version, highest patch of a pinned minor version.
+
+Environment knobs are available to tune scanning behavior (`UV_SHIMS_SCAN_MNT`, `UV_SHIMS_FAST`, `UV_SHIMS_SKIP_UVDATA`).
+
+
+
+### `uncache`
+
+Garbage-collects the `uv` cache without assuming a fixed project layout.
+
+Archive objects are removed when all contained files have a single hard link (`nlink == 1`). For cached wheels, only projects that are actually installed in **UV-managed virtual environments** are kept. Candidate projects are discovered under `~`, but only directories containing an exact `<dir>/.venv/pyvenv.cfg` are considered (no recursive project scanning).
+
+Uses `UV_CACHE_DIR` if set, otherwise defaults to `~/.cache/uv`. Debug output can be enabled by setting `DEBUG=1` inside the script.
+
+
+
+### `lock`
+
+Exports dependencies from the active virtual environment into `pyproject.toml` and generates `uv.lock`. Requires `VIRTUAL_ENV` to be set.
+
+* `--deps=env` (default): infer dependencies from installed distributions
+* `--deps=src` / `-s`: infer dependencies by scanning Python imports in source files
+* `--txt` / `-t`: additionally write a pinned `requirements.txt`
+
+CUDA-related dependencies (names containing `nvidia` or `cuda`) are automatically placed under the optional dependency group `cuda`.
 
 
 ## How to manage SSH GitHub credentials
