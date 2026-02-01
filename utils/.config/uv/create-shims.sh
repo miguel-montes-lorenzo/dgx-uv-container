@@ -718,7 +718,6 @@ chmod +x "$UV_SHIM_DIR/interpreters"
 
 
 
-
 # -------------------------
 # uncache (shim): uncache uv cache using hardlink GC + venv-installed wheels keep
 # -------------------------
@@ -759,7 +758,6 @@ extract_names_from_archive_object() {
   # Print normalized dist names found in *.dist-info/METADATA under obj_dir
   local obj_dir="$1"
 
-  # Correct: match paths like ".../<something>.dist-info/METADATA"
   mapfile -d '' -t metadata_files < <(
     find "$obj_dir" -type f -name METADATA -print0 2>/dev/null \
       | tr '\0' '\n' \
@@ -773,6 +771,7 @@ extract_names_from_archive_object() {
     if (( ${#metadata_files[@]} < show_n )); then
       show_n="${#metadata_files[@]}"
     fi
+    local i=0
     for ((i = 0; i < show_n; i++)); do
       log "    METADATA: ${metadata_files[$i]}"
     done
@@ -805,13 +804,17 @@ fi
 
 log "UV_CACHE_DIR=$UV_CACHE_DIR"
 
-mapfile -d '' -t archive_roots < <(find "$UV_CACHE_DIR" -type d -name '*archive*' -print0 2>/dev/null)
+mapfile -d '' -t archive_roots < <(
+  find "$UV_CACHE_DIR" -type d -name '*archive*' -print0 2>/dev/null
+)
 log "Found archive roots: ${#archive_roots[@]}"
 for r in "${archive_roots[@]}"; do
   log "  archive_root: $r"
 done
 
-mapfile -d '' -t wheels_roots < <(find "$UV_CACHE_DIR" -type d -name '*wheels*' -print0 2>/dev/null)
+mapfile -d '' -t wheels_roots < <(
+  find "$UV_CACHE_DIR" -type d -name '*wheels*' -print0 2>/dev/null
+)
 log "Found wheels roots: ${#wheels_roots[@]}"
 for r in "${wheels_roots[@]}"; do
   log "  wheels_root: $r"
@@ -848,27 +851,43 @@ for archive_root in "${archive_roots[@]}"; do
 done
 
 # -----------------------------------------------------------------------------
-# 2) Build keep-list from installed packages in *existing venvs* (site-packages)
+# 2) Build keep-list from installed packages in UV-managed venvs found under ~
+#    (not recursive per project: only scan "<dir>/.venv/..." if it exists)
 # -----------------------------------------------------------------------------
 keep_projects_file="$(mktemp)"
 trap 'rm -f -- "$keep_projects_file"' EXIT
 
-scan_roots=(
-  "$PWD"
-  "$HOME/data"
-  "/mnt/workdata/data"
-)
-
-log "Scanning for installed packages in venvs under:"
-for root in "${scan_roots[@]}"; do
-  log "  scan_root: $root"
-done
-
 metadata_count=0
 name_count=0
 
-for root in "${scan_roots[@]}"; do
-  [[ -d "$root" ]] || continue
+mapfile -t candidate_dirs < <(
+  find -L ~ \
+    \( -type d -name '.*' -prune \) \
+    -o \
+    \( \
+      \( -type f \( \
+          -name '.venv' \
+          -o -name 'uv.lock' \
+          -o -name 'pyproject.toml' \
+          -o -name 'requirements.txt' \
+        \) -printf '%h\n' \
+      \) \
+      -o \
+      \( -type d -name '.venv' -printf '%h\n' \) \
+    \) \
+    | sort -u
+)
+
+for dir in "${candidate_dirs[@]}"; do
+  [[ -d "$dir" ]] || continue
+
+  # UV-managed environment check: only consider "<dir>/.venv" (no recursion)
+  if [[ ! -d "$dir/.venv" ]]; then
+    continue
+  fi
+  if [[ ! -f "$dir/.venv/pyvenv.cfg" ]]; then
+    continue
+  fi
 
   while IFS= read -r -d '' metadata_path; do
     metadata_count=$((metadata_count + 1))
@@ -877,7 +896,6 @@ for root in "${scan_roots[@]}"; do
       awk -F': *' 'tolower($1)=="name" { print $2; exit }' "$metadata_path" \
         || true
     )"
-
     if [[ -z "$dist_name" ]]; then
       log "  WARN: could not parse Name: from $metadata_path"
       continue
@@ -887,8 +905,8 @@ for root in "${scan_roots[@]}"; do
     printf '%s\n' "$norm" >>"$keep_projects_file"
     name_count=$((name_count + 1))
   done < <(
-    find "$root" -type f \
-      -path '*/.venv/lib/python*/site-packages/*.dist-info/METADATA' \
+    find "$dir/.venv" -type f \
+      -path '*/lib/python*/site-packages/*.dist-info/METADATA' \
       -print0 2>/dev/null
   )
 done
@@ -940,11 +958,6 @@ done
 log "Done."
 EOF
 chmod +x "$UV_SHIM_DIR/uncache"
-
-
-
-
-
 
 
 
@@ -1245,36 +1258,6 @@ uv lock
 EOF
 
 chmod +x "$UV_SHIM_DIR/lock"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
