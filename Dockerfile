@@ -41,8 +41,8 @@ RUN mkdir -p "/home/${USERNAME}/.ssh" "/home/${USERNAME}/.config" "/home/${USERN
     && chown -R "${UID}:${GID}" "/home/${USERNAME}"
 
 # User shell config
-COPY --chown=${UID}:${GID} ./utils/bash.bashrc "/etc/bash.bashrc"
-COPY --chown=${UID}:${GID} ./utils/.bashrc "/home/${USERNAME}/.bashrc"
+COPY --chown=${UID}:${GID} ./utils/system/bash.bashrc "/etc/bash.bashrc"
+COPY --chown=${UID}:${GID} ./utils/system/.bashrc "/home/${USERNAME}/.bashrc"
 
 # Copy .config dir
 COPY --chown=${UID}:${GID} ./utils/.config/ "/home/${USERNAME}/.config/"
