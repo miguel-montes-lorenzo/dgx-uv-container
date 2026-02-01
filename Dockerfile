@@ -67,7 +67,6 @@ ENV UV_TOOL_BIN_DIR="/home/${USERNAME}/.local/bin"
 RUN uv tool install ruff --force
 RUN uv tool install ty --force
 RUN uv tool install pytest --force
-RUN uv tool install coverage --force
 RUN uv tool install "dvc[ssh,s3,gcs,azure]" --force
 
 CMD ["bash", "-lc", "sleep infinity"]
