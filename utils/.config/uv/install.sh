@@ -29,7 +29,7 @@ BASHRC="$HOME/.bashrc"
 
 LINE1='[[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"  # uv bin'
 LINE2='[[ ":$PATH:" != *":$HOME/.local/uv-shims:"* ]] && export PATH="$HOME/.local/uv-shims:$PATH"  # uv shims'
-LINE3='[ -f "$HOME/.local/uv-shims/create_shims.sh" ] && source "$HOME/.local/uv-shims/create_shims.sh"'
+LINE3='[ -f "$HOME/.local/uv-shims/create_shims.sh" ] && chmod +x "$HOME/.local/uv-shims/create_shims.sh" && "$HOME/.local/uv-shims/create_shims.sh"'
 
 [ -f "$BASHRC" ] || : > "$BASHRC"
 
@@ -63,7 +63,6 @@ END {
 ' "$BASHRC" > "$tmpfile" && mv "$tmpfile" "$BASHRC"
 
 echo "[INFO] Ensured PATH + create_shims sourcing lines in $BASHRC"
-
 
 # 4) Create shims if available
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

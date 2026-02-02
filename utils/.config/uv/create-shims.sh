@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
-# create-shims.sh — robust uv shims for WSL/Linux
-# Shims installed to ~/.local/uv-shims:
-#   python       -> uv run python (stable resolver)
-#   pip          -> uv pip (supports -p/--python)
-#   version      -> 2 lines: "uv X.Y.Z" and "Python A.B.C" (or "(none)")
-#   venv         -> creates venv + execs a new interactive shell already activated
-#   lpin         -> print/set local pin
-#   gpin         -> print/set global pin
-#   interpreters -> fast, deduped, patch-level names; ⭐ current/exact pin/highest patch
-#   uv           -> dispatcher; safe when called with no args
-#
-# After running:
-#   source ~/.bashrc
-#   hash -r
+# create-shims.sh — generate uv shims for WSL/Linux
+# Shims created in ~/.local/uv-shims:
+#   python        -> uv run python (stable resolver; respects pins)
+#   pip           -> uv pip (supports -p/--python)
+#   version       -> prints: "uv X.Y.Z" and then "Python A.B.C" (or "(none)")
+#   venv          -> create + activate .venv in the current shell (function)
+#   lpin          -> print/set local pin (nearest .python-version ancestor)
+#   gpin          -> print/set global pin
+#   interpreters  -> list installed interpreters (deduped, patch-level; marks best match)
+#   uncache       -> garbage-collect uv cache (keeps wheels for venv-installed dists)
+#   lock          -> add deps to pyproject from env/src imports and run uv lock
 
-# set -euo pipefail
+__uv_shims__old_opts="$(set +o)"
+__uv_shims__old_nounset="off"
+__uv_shims__old_pipefail="off"
+
+if [[ "$-" == *u* ]]; then
+  __uv_shims__old_nounset="on"
+fi
+if set -o | awk '$1=="pipefail"{print $2; exit}' | grep -qx on; then
+  __uv_shims__old_pipefail="on"
+fi
+
 set -uo pipefail
+
 
 UV_SHIM_DIR="$HOME/.local/uv-shims"
 mkdir -p "$UV_SHIM_DIR"
@@ -1264,12 +1272,6 @@ chmod +x "$UV_SHIM_DIR/lock"
 
 
 
-
-
-
-
-
-
 # -------------------------
 # Ensure PATH contains ~/.local/uv-shims
 # -------------------------
@@ -1279,3 +1281,9 @@ if ! grep -q '# uv shims$' "$PROFILE"; then
   printf '%s\n' '[[ ":$PATH:" != *":$HOME/.local/uv-shims:"* ]] && export PATH="$HOME/.local/uv-shims:$PATH"  # uv shims' >> "$PROFILE"
   echo "[INFO] Added ~/.local/uv-shims to PATH in $PROFILE"
 fi
+
+
+set +u
+set +o pipefail
+eval "${__uv_shims__old_opts}"
+unset __uv_shims__old_opts __uv_shims__old_nounset __uv_shims__old_pipefail
