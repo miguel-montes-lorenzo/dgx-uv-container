@@ -3,26 +3,29 @@ name: ${COMPOSE_PROJECT_NAME}
 services:
   ubuntu:
     # container_name: ${USER}-${PWD}-container  # comment to fallback to default naming: <project>_<service>_<index>
-    # image: ${USER}-${PWD}-image  # comment to fallback to default naming: <project>_<service>
+    image: dgx-ubuntu  # comment to fallback to default naming: <project>_<service>
     build:
       context: .
       args:
         UID: ${HOST_UID}
         GID: ${HOST_GID}
-        USERNAME: ${CONTAINER_USER}
+        USERNAME: "${CONTAINER_USER}"
     networks: [alumnos]
 
     volumes:
       - ${HOST_VOLUME_PATH}:/mnt/workdata
+      - ./utils/:/mnt/utils
 
     environment:
-      # uv should use the absolute cache dir
-      - USER=${CONTAINER_USER}
+      # - USER=${CONTAINER_USER}
+      - CONTAINER_USER=${CONTAINER_USER}
 
-      - UV_CACHE_DIR=/mnt/workdata/${UV_CACHE_SUBDIR}
+      - UV_CACHE_DIR=/mnt/workdata/${UV_CACHE_SUBDIR}  # "/home/${USERNAME}/.cache/uv"
       - UV_LINK_MODE=hardlink
 
       - PERSISTENT_UV_CACHE=${PERSISTENT_UV_CACHE}  # ??
+
+      # cleanup cache everytime a 
       # - PERSISTENT_CACHE=true
       - CACHE_CLEANUP_TIME=3600
 
@@ -36,43 +39,93 @@ services:
       - bash
       - -lc
       - |
-          set -euo pipefail
+          set -Eeuo pipefail
 
 
-          # SET UP VOLUMES
+          echo
+          date
+          echo ---
+          echo $HOME $$HOME ${HOME}
+          ls /
+          echo ---
+          ls /home
+          echo ---
+
+          HOME="/home/$$CONTAINER_USER"
+
+          ls $$HOME
+          echo ---
+
+          mkdir -p $$HOME
+          chown -R "${HOST_UID}:${HOST_GID}" $$HOME || true
+          chmod 755 $$HOME || true
+
+
+          echo "$$CONTAINER_USER" ${CONTAINER_USER} "$$HOME"
+
+
+          # SET UP UTILS VOLUME
+
+          rm -f $$HOME/.bashrc
+          cp /mnt/utils/system/.bashrc $$HOME/.bashrc
+          cp /mnt/utils/system/bash.bashrc /etc/bash.bashrc
+
+          rm -rf $$HOME/.config
+          mkdir -p $$HOME/.config
+          cp -a /mnt/utils/.config/. $$HOME/.config/
+
+
+          echo "done utils"
+
+
+          # SET UP WORKDATA VOLUME
 
           mkdir -p \
             /mnt/workdata/${DATA_SUBDIR} \
             /mnt/workdata/${UV_CACHE_SUBDIR} \
             /mnt/workdata/${SSH_SUBDIR}
 
-          rm -rf /home/${CONTAINER_USER}/data
-          ln -sfn /mnt/workdata/${DATA_SUBDIR} /home/${CONTAINER_USER}/data
+          rm -rf $$HOME/data
+          ln -sfn /mnt/workdata/${DATA_SUBDIR} $$HOME/data
 
-          mkdir -p /home/${CONTAINER_USER}/.cache
-          rm -rf /home/${CONTAINER_USER}/.cache/uv
-          # ln -sfn /mnt/workdata/${UV_CACHE_SUBDIR} /home/${CONTAINER_USER}/.cache/uv
+          mkdir -p $$HOME/.cache
+          rm -rf $$HOME/.cache/uv
+          # ln -sfn /mnt/workdata/${UV_CACHE_SUBDIR} $$HOME/.cache/uv
 
-          rm -rf /home/${CONTAINER_USER}/.ssh
-          ln -sfn /mnt/workdata/${SSH_SUBDIR} /home/${CONTAINER_USER}/.ssh
+          rm -rf $$HOME/.ssh
+          ln -sfn /mnt/workdata/${SSH_SUBDIR} $$HOME/.ssh
 
           chown -R ${HOST_UID}:${HOST_GID} /mnt/workdata || true
-          chown -R ${HOST_UID}:${HOST_GID} /home/${CONTAINER_USER} || true
+          chown -R ${HOST_UID}:${HOST_GID} $$HOME || true
 
           chmod 700 /mnt/workdata/${SSH_SUBDIR}
           chmod 600 /mnt/workdata/${SSH_SUBDIR}/* 2>/dev/null || true
 
 
-          # SET UP CACHE
+
+          echo "done workdata"
 
 
-          # SET UP CLEANUP TIMER
+          # # SET UP UV
+          # # bash $$HOME/.config/uv/install.sh
+          # source $$HOME/.config/uv/install.sh
+          # uv tool install ruff --force
+          # uv tool install ty --force
+          # uv tool install black --force
+          # uv tool install pytest --force
+          # uv tool install "dvc[ssh,s3]" --force
+          
+
+          # SET UP CLEANUP CACHE TIMER
 
 
           # systemd-run --user --unit=myjob --replace your_command
 
+          echo "done"
 
           exec su -s /bin/bash ${CONTAINER_USER} -c "sleep infinity"
+
+          # exec sleep infinity
 
 networks:
   alumnos:

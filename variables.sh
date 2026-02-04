@@ -1,17 +1,18 @@
-COMPOSE_PROJECT_NAME=""
+# DOCKER
+COMPOSE_PROJECT_NAME="TO BE DEFINED IN __update_compose_project_name"
 CONTAINER_USER="guest"
 
-# uv
+# UV
 PERSISTENT_UV_CACHE=false
 
-# Host paths
+# PATHS
 HOST_VOLUME_PATH="/home/${USER}/workdata/"
 DATA_SUBDIR="data"
 SSH_SUBDIR="ssh"
 UV_CACHE_SUBDIR="uv_cache"
 
 
-# Define dynamic (user-unique & dir-unique) COMPOSE_PROJECT_NAME
+# DEFINE DYNAMIC (USER-UNIQUE & DIR-UNIQUE) COMPOSE_PROJECT_NAME
 __update_compose_project_name() {
   local user="$USER"
   local dir
@@ -33,7 +34,7 @@ else
   PROMPT_COMMAND="__update_compose_project_name; $PROMPT_COMMAND"
 fi
 
-
+# EXPORT VARIABLES
 export COMPOSE_PROJECT_NAME SERVICE CONTAINER_USER
 export PERSISTENT_UV_CACHE
 export HOST_VOLUME_PATH DATA_SUBDIR SSH_SUBDIR UV_CACHE_SUBDIR

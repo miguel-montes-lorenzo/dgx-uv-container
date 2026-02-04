@@ -1,8 +1,10 @@
 FROM ubuntu:noble
 
-ARG UID=1098
-ARG GID=1002
-ARG USERNAME=guest
+# TO BE PARSED FROM docker-compose.yaml
+ARG UID=
+ARG GID=
+ARG USERNAME=
+
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -40,33 +42,37 @@ RUN mkdir -p "/home/${USERNAME}/.ssh" "/home/${USERNAME}/.config" "/home/${USERN
     && chmod 700 "/home/${USERNAME}/.ssh" \
     && chown -R "${UID}:${GID}" "/home/${USERNAME}"
 
-# User shell config
-COPY --chown=${UID}:${GID} ./utils/system/bash.bashrc "/etc/bash.bashrc"
-COPY --chown=${UID}:${GID} ./utils/system/.bashrc "/home/${USERNAME}/.bashrc"
+# # User shell config
+# COPY --chown=${UID}:${GID} ./utils/system/bash.bashrc "/etc/bash.bashrc"
+# COPY --chown=${UID}:${GID} ./utils/system/.bashrc "/home/${USERNAME}/.bashrc"
 
-# Copy .config dir
-COPY --chown=${UID}:${GID} ./utils/.config/ "/home/${USERNAME}/.config/"
+# # Copy .config dir
+# COPY --chown=${UID}:${GID} ./utils/.config/ "/home/${USERNAME}/.config/"
 
-# Copy README.md
-COPY --chown=${UID}:${GID} ./README.md "/home/${USERNAME}/README.md"
+# # Copy README.md
+# COPY --chown=${UID}:${GID} ./README.md "/home/${USERNAME}/README.md"
+
+
 
 USER ${USERNAME}
 
-ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
-# Compose can override; keep a default
-ENV UV_CACHE_DIR="/home/${USERNAME}/.cache/uv"
 
-# This installs uv
-RUN bash "/home/${USERNAME}/.config/uv/install.sh"
 
-# Ensure uv is visible in non-interactive RUN steps
-ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
-ENV UV_TOOL_BIN_DIR="/home/${USERNAME}/.local/bin"
 
-# Install ruff as a uv-managed tool
-RUN uv tool install ruff --force
-RUN uv tool install ty --force
-RUN uv tool install pytest --force
-RUN uv tool install "dvc[ssh,s3,gcs,azure]" --force
+# # Compose can override; keep a default
+# ENV UV_CACHE_DIR="/home/${USERNAME}/.cache/uv"
+
+# # This installs uv
+# RUN bash "/home/${USERNAME}/.config/uv/install.sh"
+
+# # Ensure uv is visible in non-interactive RUN steps
+# ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
+# ENV UV_TOOL_BIN_DIR="/home/${USERNAME}/.local/bin"
+
+# # Install ruff as a uv-managed tool
+# RUN uv tool install ruff --force
+# RUN uv tool install ty --force
+# RUN uv tool install pytest --force
+# RUN uv tool install "dvc[ssh,s3,gcs,azure]" --force
 
 CMD ["bash", "-lc", "sleep infinity"]
