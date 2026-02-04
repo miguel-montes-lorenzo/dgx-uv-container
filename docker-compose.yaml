@@ -1,6 +1,9 @@
+name: ${USER}-${PWD}-compose
+
 services:
   ubuntu:
-    container_name: ${USER}-session
+    # container_name: ${USER}-${PWD}-container  # comment to fallback to default naming: <project>_<service>_<index>
+    # image: ${USER}-${PWD}-image  # comment to fallback to default naming: <project>_<service>
     build:
       context: .
       args:
@@ -50,6 +53,7 @@ services:
 
           chmod 700 /mnt/workdata/${SSH_SUBDIR}
           chmod 600 /mnt/workdata/${SSH_SUBDIR}/* 2>/dev/null || true
+
 
           exec su -s /bin/bash ${CONTAINER_USER} -c "sleep infinity"
 
