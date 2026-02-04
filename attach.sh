@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 source variables.sh
-docker compose -p "${PROJECT}" exec -it \
+docker compose -p "${COMPOSE_PROJECT_NAME}" exec -it \
   -u "${CONTAINER_USER}" \
   -w "/home/${CONTAINER_USER}" \
   ubuntu \

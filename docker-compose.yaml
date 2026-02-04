@@ -1,6 +1,9 @@
+name: ${COMPOSE_PROJECT_NAME}
+
 services:
   ubuntu:
-    container_name: ${USER}-session
+    # container_name: ${USER}-${PWD}-container  # comment to fallback to default naming: <project>_<service>_<index>
+    # image: ${USER}-${PWD}-image  # comment to fallback to default naming: <project>_<service>
     build:
       context: .
       args:
@@ -15,9 +18,14 @@ services:
     environment:
       # uv should use the absolute cache dir
       - USER=${CONTAINER_USER}
+
       - UV_CACHE_DIR=/mnt/workdata/${UV_CACHE_SUBDIR}
-      - PERSISTENT_UV_CACHE=${PERSISTENT_UV_CACHE}
       - UV_LINK_MODE=hardlink
+
+      - PERSISTENT_UV_CACHE=${PERSISTENT_UV_CACHE}  # ??
+      # - PERSISTENT_CACHE=true
+      - CACHE_CLEANUP_TIME=3600
+
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - DISPLAY_INFO_AT_STARTUP=true
@@ -29,6 +37,9 @@ services:
       - -lc
       - |
           set -euo pipefail
+
+
+          # SET UP VOLUMES
 
           mkdir -p \
             /mnt/workdata/${DATA_SUBDIR} \
@@ -50,6 +61,16 @@ services:
 
           chmod 700 /mnt/workdata/${SSH_SUBDIR}
           chmod 600 /mnt/workdata/${SSH_SUBDIR}/* 2>/dev/null || true
+
+
+          # SET UP CACHE
+
+
+          # SET UP CLEANUP TIMER
+
+
+          # systemd-run --user --unit=myjob --replace your_command
+
 
           exec su -s /bin/bash ${CONTAINER_USER} -c "sleep infinity"
 

@@ -3,7 +3,7 @@ source variables.sh
 
 UV_CACHE_PATH="${HOST_VOLUME_PATH}/${UV_CACHE_SUBDIR}"
 
-docker compose -p "${PROJECT}" down
+docker compose -p "${COMPOSE_PROJECT_NAME}" down
 
 if [[ "${PERSISTENT_UV_CACHE}" != "true" ]]; then
   if [[ -d "${UV_CACHE_PATH}" ]]; then
