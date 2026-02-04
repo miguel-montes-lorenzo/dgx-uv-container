@@ -1,4 +1,4 @@
-PROJECT="${USER}-${PWD}-compose"
+PROJECT="${USER}-session"
 CONTAINER_USER="guest"
 
 # uv
