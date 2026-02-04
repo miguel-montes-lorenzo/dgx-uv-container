@@ -17,10 +17,10 @@ services:
       - ./utils/:/mnt/utils
 
     environment:
-      # - USER=${CONTAINER_USER}
+      - USER=${CONTAINER_USER}
       - CONTAINER_USER=${CONTAINER_USER}
 
-      - UV_CACHE_DIR=/mnt/workdata/${UV_CACHE_SUBDIR}  # "/home/${USERNAME}/.cache/uv"
+      - UV_CACHE_DIR=/mnt/workdata/${UV_CACHE_SUBDIR}
       - UV_LINK_MODE=hardlink
 
       - PERSISTENT_UV_CACHE=${PERSISTENT_UV_CACHE}  # ??
@@ -41,27 +41,13 @@ services:
       - |
           set -Eeuo pipefail
 
-
-          echo
+          echo ---
           date
-          echo ---
-          echo $HOME $$HOME ${HOME}
-          ls /
-          echo ---
-          ls /home
-          echo ---
 
           HOME="/home/$$CONTAINER_USER"
-
-          ls $$HOME
-          echo ---
-
           mkdir -p $$HOME
           chown -R "${HOST_UID}:${HOST_GID}" $$HOME || true
           chmod 755 $$HOME || true
-
-
-          echo "$$CONTAINER_USER" ${CONTAINER_USER} "$$HOME"
 
 
           # SET UP UTILS VOLUME
@@ -73,9 +59,6 @@ services:
           rm -rf $$HOME/.config
           mkdir -p $$HOME/.config
           cp -a /mnt/utils/.config/. $$HOME/.config/
-
-
-          echo "done utils"
 
 
           # SET UP WORKDATA VOLUME
@@ -102,19 +85,27 @@ services:
           chmod 600 /mnt/workdata/${SSH_SUBDIR}/* 2>/dev/null || true
 
 
+          # SET UP UV
+          su - "${CONTAINER_USER}" -s /bin/bash -c '
+            set -Eeuo pipefail
+            # Force correct HOME even if something preserves environment incorrectly
+            export HOME="/home/'"${CONTAINER_USER}"'"
+            export USER="'"${CONTAINER_USER}"'"
+            export PATH="$HOME/.local/bin:$PATH"
+            # Make sure the file exists (better error)
+            test -f "$$HOME/.config/uv/install.sh"
+            echo "$$HOME/.config/uv/install.sh"
+            source "$$HOME/.config/uv/install.sh"
+            uv tool install ruff --force
+            uv tool install ty --force
+            uv tool install black --force
+            uv tool install pytest --force
+            uv tool install "dvc[ssh,s3]" --force
+          '
 
-          echo "done workdata"
 
+          echo "uv setup done"
 
-          # # SET UP UV
-          # # bash $$HOME/.config/uv/install.sh
-          # source $$HOME/.config/uv/install.sh
-          # uv tool install ruff --force
-          # uv tool install ty --force
-          # uv tool install black --force
-          # uv tool install pytest --force
-          # uv tool install "dvc[ssh,s3]" --force
-          
 
           # SET UP CLEANUP CACHE TIMER
 

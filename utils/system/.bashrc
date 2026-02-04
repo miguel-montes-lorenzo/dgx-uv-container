@@ -7,9 +7,16 @@
 #     *i*) ;;
 #       *) return;;
 # esac
+
+# # Disable strict-mode in interactive shells (prevents random prompt-hook exits).
+# case "$-" in
+#   *i*) set +e; set +u ;;
+# esac
+
 # Disable strict-mode in interactive shells (prevents random prompt-hook exits).
 case "$-" in
   *i*) set +e; set +u ;;
+    *) return;;
 esac
 
 # don't put duplicate lines or lines starting with space in the history.
@@ -122,7 +129,7 @@ if ! shopt -oq posix; then
 fi
 
 # remove unused dependencies from the uv cache
-"${HOME}/.local/uv-shims/uncache"
+command -v uncache >/dev/null 2>&1 && uncache >/dev/null  # silent success & visible failure
 if command -v uv >/dev/null 2>&1; then
   mkdir -p -- "${UV_CACHE_DIR:-$HOME/.cache/uv}" 2>/dev/null || true
   uv cache prune >/dev/null 2>&1 || echo "uv cache prune failed" >&2
@@ -130,20 +137,22 @@ fi
 
 ### CUSTOM
 
+[[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"  # uv bin
+[ -f "$HOME/.config/uv/define-functions.sh" ] && chmod +x "$HOME/.config/uv/define-functions.sh" && ( set -e; "$HOME/.config/uv/define-functions.sh" ) && source "$HOME/.config/uv/define-functions.sh" >&2
+
 chmod +x "$HOME/.config/uv/uv-cache-dependency-clean.sh"
 
 # aliases
 alias py="python"
 alias cls="clear"
 alias storage="du -hc --max-depth=0 /home/${USER}/.local/share/uv/python /home/${USER}/.local/share/uv/tools /mnt/workdata/uv_cache /mnt/workdata/data/"
-# alias exit="'${HOME}/.local/uv-shims/uncache' && exit"
 
 exit() {
   if [[ "${PERSISTENT_UV_CACHE:-true}" != "true" ]]; then
     DEBUG=0 "$HOME/.config/uv/uv-cache-dependency-clean.sh" >/dev/null 2>&1 || true
     find /mnt/workdata/uv_cache -mindepth 1 -delete >/dev/null 2>&1 || true
   fi
-  "$HOME/.local/uv-shims/uncache" || true
+  command -v uncache >/dev/null 2>&1 && uncache >/dev/null  # silent success & visible failure
   builtin exit
 }
 
@@ -157,7 +166,8 @@ case "${DISPLAY_INFO_AT_STARTUP:-false}" in
     fi
     echo ""
     echo "INSTALLED PYTHON INTERPRETERS:"
-    "${HOME}/.local/uv-shims/interpreters"
+    [[ $- == *i* && -z "${__PY_DELAYED:-}" ]] && { compgen -G "${XDG_DATA_HOME:-$HOME/.local/share}/uv/python/cpython-*/bin/python*" >/dev/null || { __PY_DELAYED=1; sleep 3; }; }  # sleep 3 seconds if no python installed
+    command -v uncache >/dev/null 2>&1 && interpreters || true
     echo ""
     echo "EFFECTIVE STORAGE:"
     storage

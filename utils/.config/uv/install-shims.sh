@@ -11,111 +11,93 @@ if command grep -q $'\r' -- "$SELF"; then
 fi
 
 
-# # --- strict mode + useful traceback ---
-# set -Eeuo pipefail
-# shopt -s inherit_errexit 2>/dev/null || true
-# set -o errtrace
-
-# __traceback() {
-#   local status="$?"
-#   local i=0
-
-#   echo "[ERROR] status : ${status}" >&2
-#   echo "[ERROR] command: ${BASH_COMMAND}" >&2
-#   echo "[ERROR] at     : ${BASH_SOURCE[1]}:${BASH_LINENO[0]} (func: ${FUNCNAME[1]:-MAIN})" >&2
-#   echo "[ERROR] stack  :" >&2
-#   for ((i=1; i<${#FUNCNAME[@]}; i++)); do
-#     echo "  - ${BASH_SOURCE[$i]}:${BASH_LINENO[$((i-1))]}  ${FUNCNAME[$i]}" >&2
-#   done
-# }
-
-# trap '__traceback' ERR
-
-# # --- end traceback setup ---
-
+set -o pipefail
+set -u
 
 # 1) Ensure local bin dir exists
 UVBIN="$HOME/.local/bin"
 mkdir -p "$UVBIN"
 
-
 # 2) Install uv if missing
-export PATH="$HOME/.local/bin:$PATH"
 if ! command -v uv >/dev/null 2>&1; then
-  echo "[INFO] Installing uv..." >&2
-  tmp_uv_installer="$(mktemp)"
-  retries=5
-  delay=2.5
-  attempt=1
-  while :; do
-    if curl -fsSL --connect-timeout 10 --max-time 120 \
-      -o "$tmp_uv_installer" \
-      https://astral.sh/uv/install.sh; then
-      break
-    fi
-    if (( attempt >= retries )); then
-      echo "[ERROR] Failed to download uv installer after ${retries} attempts" >&2
-      rm -f "$tmp_uv_installer"
-      exit 1
-    fi
-    echo "[WARN] Download failed (attempt ${attempt}/${retries}); retrying in ${delay}s..." >&2
-    attempt=$((attempt + 1))
-    sleep "$delay"
-  done
-  if ! bash "$tmp_uv_installer" >/dev/null 2>&1; then
-    echo "[ERROR] uv installer failed" >&2
-    rm -f "$tmp_uv_installer"
-    exit 1
-  fi
-  rm -f "$tmp_uv_installer"
+  echo "[INFO] Installing uv..."
+  curl -sSL https://astral.sh/uv/install.sh | bash >/dev/null 2>&1
 fi
-
 
 # 3) Ensure PATH lines in ~/.bashrc
 BASHRC="$HOME/.bashrc"
 
 LINE1='[[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"  # uv bin'
-LINE2='[ -f "$HOME/.config/uv/define-functions.sh" ] && chmod +x "$HOME/.config/uv/define-functions.sh" && ( set -e; "$HOME/.config/uv/define-functions.sh" ) && source "$HOME/.config/uv/define-functions.sh" >&2'
+LINE2='[[ ":$PATH:" != *":$HOME/.local/uv-shims:"* ]] && export PATH="$HOME/.local/uv-shims:$PATH"  # uv shims'
+LINE3='[ -f "$HOME/.local/uv-shims/create_shims.sh" ] && chmod +x "$HOME/.local/uv-shims/create_shims.sh" && "$HOME/.local/uv-shims/create_shims.sh"'
 
 [ -f "$BASHRC" ] || : > "$BASHRC"
 
 tmpfile="$(mktemp)"
-awk -v l1="$LINE1" -v l2="$LINE2" '
-BEGIN { f1=0; f2=0 }
+awk -v l1="$LINE1" -v l2="$LINE2" -v l3="$LINE3" '
+BEGIN { f1=0; f2=0; f3=0 }
 {
   # Keep exact matches
   if ($0 == l1) { f1=1; print; next }
   if ($0 == l2) { f2=1; print; next }
+  if ($0 == l3) { f3=1; print; next }
 
   # Uncomment commented variants (with/without spaces)
   line = $0
   sub(/^[[:space:]]*#?[[:space:]]*/, "", line)
   if (line == l1) { f1=1; print l1; next }
   if (line == l2) { f2=1; print l2; next }
+  if (line == l3) { f3=1; print l3; next }
 
   print
 }
 END {
-  if (!f1 || !f2) {
+  if (!f1 || !f2 || !f3) {
     print ""
     print ""
     if (!f1) print l1
     if (!f2) print l2
+    if (!f3) print l3
   }
 }
 ' "$BASHRC" > "$tmpfile" && mv "$tmpfile" "$BASHRC"
 
-echo "[INFO] Ensured PATH + define-functions sourcing lines in $BASHRC"
+echo "[INFO] Ensured PATH + create_shims sourcing lines in $BASHRC"
 
+# 4) Create shims if available
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -x "$SCRIPT_DIR/create-shims.sh" ]; then
+  "$SCRIPT_DIR/create-shims.sh"
+elif [ -f "$SCRIPT_DIR/create-shims.sh" ]; then
+  bash "$SCRIPT_DIR/create-shims.sh"
+else
+  echo "[INFO] Skipping create-shims.sh (not found)"
+fi
 
-# 4) Refresh PATH in THIS shell (no sourcing of ~/.bashrc)
+# 4.5) Ensure create_shims.sh exists inside uv-shims
+UVSHIMS_DIR="$HOME/.local/uv-shims"
+mkdir -p "$UVSHIMS_DIR"
+
+# Copy the local create-shims.sh into uv-shims as create_shims.sh (underscore name)
+if [ -f "$SCRIPT_DIR/create-shims.sh" ]; then
+  cp -f "$SCRIPT_DIR/create-shims.sh" "$UVSHIMS_DIR/create_shims.sh"
+  chmod +x "$UVSHIMS_DIR/create_shims.sh" || true
+  echo "[INFO] Installed $UVSHIMS_DIR/create_shims.sh"
+else
+  echo "[INFO] Skipping uv-shims/create_shims.sh install (not found: $SCRIPT_DIR/create-shims.sh)"
+fi
+
+# 5) Refresh PATH in THIS shell (no sourcing of ~/.bashrc)
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) : ;;
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
+case ":$PATH:" in
+  *":$HOME/.local/uv-shims:"*) : ;;
+  *) export PATH="$HOME/.local/uv-shims:$PATH" ;;
+esac
 
-
-# 5) Ensure at least one uv-managed Python is installed (install latest if none)
+# 6) Ensure at least one uv-managed Python is installed (install latest if none)
 #    We treat "uv-managed" as: directories named cpython-* in uv's Python store.
 XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 UV_PY_DIR="${XDG_DATA_HOME}/uv/python"
@@ -132,6 +114,12 @@ if [ "$has_uv_managed_python" != "yes" ]; then
   echo "[INFO] No uv-managed Python found in $UV_PY_DIR; installing latest via 'uv python install'..."
   if uv python install; then
     echo "[INFO] Installed latest Python via uv."
+    # If you rely on shims, refresh them after installation.
+    if [ -x "$SCRIPT_DIR/create-shims.sh" ]; then
+      "$SCRIPT_DIR/create-shims.sh"
+    elif [ -f "$SCRIPT_DIR/create-shims.sh" ]; then
+      bash "$SCRIPT_DIR/create-shims.sh"
+    fi
   else
     echo "[WARN] 'uv python install' failed. Check your network/proxy and run it manually."
   fi
