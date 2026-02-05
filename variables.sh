@@ -1,7 +1,7 @@
 # DOCKER
 COMPOSE_PROJECT_NAME="TO BE DEFINED IN __update_compose_project_name"
 CONTAINER_USER="guest"
-COMPOSE_STATE_DIR="/var/tmp/compose-running"
+COMPOSE_STATE_DIR="/run/compose-running"
 
 # UV
 PERSISTENT_UV_CACHE=false

@@ -20,6 +20,8 @@ services:
       - USER=${CONTAINER_USER}
       - CONTAINER_USER=${CONTAINER_USER}
 
+      - COMPOSE_STATE_DIR=${COMPOSE_STATE_DIR}
+
       - UV_CACHE_DIR=/mnt/workdata/${UV_CACHE_SUBDIR}
       - UV_LINK_MODE=hardlink
 
@@ -41,7 +43,7 @@ services:
       - |
           set -Eeuo pipefail
 
-          echo true > /var/tmp/compose-running
+          echo true > ${COMPOSE_STATE_DIR}
 
           HOME="/home/$$CONTAINER_USER"
           mkdir -p $$HOME
@@ -113,10 +115,8 @@ services:
 
           echo "done"
 
-          echo false > /var/tmp/compose-running
+          echo false > ${COMPOSE_STATE_DIR}
           exec su -s /bin/bash ${CONTAINER_USER} -c "sleep infinity"
-
-          # exec sleep infinity
 
 networks:
   alumnos:

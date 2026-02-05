@@ -79,7 +79,6 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 
-
 # 3) Ensure PATH lines in ~/.bashrc
 BASHRC="$HOME/.bashrc"
 
