@@ -41,8 +41,7 @@ services:
       - |
           set -Eeuo pipefail
 
-          echo ---
-          date
+          echo true > /var/tmp/compose-running
 
           HOME="/home/$$CONTAINER_USER"
           mkdir -p $$HOME
@@ -114,6 +113,7 @@ services:
 
           echo "done"
 
+          echo false > /var/tmp/compose-running
           exec su -s /bin/bash ${CONTAINER_USER} -c "sleep infinity"
 
           # exec sleep infinity

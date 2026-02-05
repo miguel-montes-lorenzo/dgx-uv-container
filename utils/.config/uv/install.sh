@@ -48,17 +48,25 @@ if ! command -v uv >/dev/null 2>&1; then
   delay=2.5
   attempt=1
   while :; do
-    if curl -fsSL --connect-timeout 10 --max-time 120 \
-      -o "$tmp_uv_installer" \
-      https://astral.sh/uv/install.sh; then
-      break
-    fi
+    curl_err_default="$(
+      curl -fsSL -S --connect-timeout 10 --max-time 120 \
+        -o "$tmp_uv_installer" \
+        https://astral.sh/uv/install.sh 2>&1
+    )" && break
+    curl_err_v4="$(
+      curl -4 -fsSL -S --connect-timeout 10 --max-time 120 \
+        -o "$tmp_uv_installer" \
+        https://astral.sh/uv/install.sh 2>&1
+    )" && break
+    echo "[WARN] Download failed (attempt ${attempt}/${retries})" >&2
+    echo "[WARN]   default: ${curl_err_default}" >&2
+    echo "[WARN]   ipv4   : ${curl_err_v4}" >&2
+
     if (( attempt >= retries )); then
       echo "[ERROR] Failed to download uv installer after ${retries} attempts" >&2
       rm -f "$tmp_uv_installer"
       exit 1
     fi
-    echo "[WARN] Download failed (attempt ${attempt}/${retries}); retrying in ${delay}s..." >&2
     attempt=$((attempt + 1))
     sleep "$delay"
   done
@@ -69,6 +77,7 @@ if ! command -v uv >/dev/null 2>&1; then
   fi
   rm -f "$tmp_uv_installer"
 fi
+
 
 
 # 3) Ensure PATH lines in ~/.bashrc
