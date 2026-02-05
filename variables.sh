@@ -3,18 +3,18 @@ COMPOSE_PROJECT_NAME="TO BE DEFINED IN __update_compose_project_name"
 CONTAINER_USER="guest"
 
 # CONTROL
-COMPOSE_STATE_DIR="/run/control/compose-running"
-CLEANUP_STATE_DIR="/run/control/cache-cleanup-time"
-CACHE_CLEANUP_TIME=3600
+COMPOSE_STATE_DIR="/run/control/var/compose-running"
+CLEANUP_STATE_DIR="/run/control/var/cache-cleanup-time"
+CACHE_CLEANUP_TIME=60
 
 # UV
 PERSISTENT_UV_CACHE=false
 
 # HOST PATHS
 HOST_VOLUME_PATH="/home/${USER}/workdata/"
-DATA_SUBDIR="data"
-SSH_SUBDIR="ssh"
-UV_CACHE_SUBDIR="uv_cache"
+DATA_SUBDIR="data/"
+SSH_SUBDIR="ssh/"
+UV_CACHE_SUBDIR="uv_cache/"
 
 
 # DEFINE DYNAMIC (USER-UNIQUE & DIR-UNIQUE) COMPOSE_PROJECT_NAME

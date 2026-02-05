@@ -185,6 +185,71 @@ source "${HOME}/.config/ssh/define-ssh-functions.sh"
 prune-github-credentials >/dev/null 2>&1 || true
 
 
+
+
+
+
+
+
+
+
+
+
+
+# ---- cache cleanup inactivity ping (global across all terminals) ----
+# Requires env:
+#   CLEANUP_STATE_DIR=/run/control/var/cache-cleanup-time
+#   CACHE_CLEANUP_TIME=<seconds>
+__cache_cleanup__ping() {
+  # Best-effort: never break interactive shell if something fails.
+  local state_file lock_file
+  state_file="${CLEANUP_STATE_DIR:-}"
+  lock_file="${state_file}.lock"
+  [[ -n "${state_file}" ]] || return 0
+  [[ -n "${CACHE_CLEANUP_TIME:-}" ]] || return 0
+  [[ "${CACHE_CLEANUP_TIME}" =~ ^[0-9]+$ ]] || return 0
+  mkdir -p -- "$(dirname -- "${state_file}")" 2>/dev/null || true
+  # Use flock to avoid races with the timer.
+  command -v flock >/dev/null 2>&1 || { printf '%s\n' "${CACHE_CLEANUP_TIME}" >"${state_file}" 2>/dev/null || true; return 0; }
+  flock -x "${lock_file}" -c "printf '%s\n' '${CACHE_CLEANUP_TIME}' >'${state_file}'" 2>/dev/null || true
+  return 0
+}
+# Run ping right before executing each interactive command (DEBUG trap).
+# Chain with existing DEBUG trap if present.
+__cache_cleanup__install_debug_trap() {
+  local existing
+  existing="$(trap -p DEBUG | sed -n "s/^trap -- '\(.*\)' DEBUG$/\1/p")"
+  if [[ -z "${existing}" ]]; then
+    trap '__cache_cleanup__ping' DEBUG
+  else
+    # Only chain if not already present
+    case "${existing}" in
+      *__cache_cleanup__ping*) : ;;
+      *)
+        trap "${existing}"' ; __cache_cleanup__ping' DEBUG
+        ;;
+    esac
+  fi
+}
+# Also ping when prompt is displayed (end of command / on Enter).
+__cache_cleanup__install_prompt_command() {
+  if [[ -z "${PROMPT_COMMAND:-}" ]]; then
+    PROMPT_COMMAND="__cache_cleanup__ping"
+  else
+    case ";${PROMPT_COMMAND};" in
+      *";__cache_cleanup__ping;"*) : ;;
+      *)
+        PROMPT_COMMAND="${PROMPT_COMMAND} ; __cache_cleanup__ping"
+        ;;
+    esac
+  fi
+}
+__cache_cleanup__install_debug_trap
+__cache_cleanup__install_prompt_command
+# ---- end cache cleanup hook ----
+
+
+
 # Ensure errexit is disabled in interactive shells to prevent the session from
 # exiting when a command returns a non-zero status
 set +o errexit

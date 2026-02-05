@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 source variables.sh
 
-UV_CACHE_PATH="${HOST_VOLUME_PATH}/${UV_CACHE_SUBDIR}"
+UV_CACHE_PATH="${HOST_VOLUME_PATH}${UV_CACHE_SUBDIR}"
 
 docker compose -p "${COMPOSE_PROJECT_NAME}" down
 
