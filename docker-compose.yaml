@@ -29,7 +29,9 @@ services:
 
       # cleanup cache everytime a 
       # - PERSISTENT_CACHE=true
-      - CACHE_CLEANUP_TIME=3600
+      - COMPOSE_STATE_DIR=${COMPOSE_STATE_DIR}
+      - CLEANUP_STATE_DIR=${CLEANUP_STATE_DIR}
+      - CACHE_CLEANUP_TIME=${CACHE_CLEANUP_TIME}
 
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
