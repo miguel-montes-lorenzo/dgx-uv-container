@@ -8,22 +8,6 @@ ARG USERNAME=
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# RUN apt-get update \
-#     && apt-get install -y --no-install-recommends \
-#         bash \
-#         ca-certificates \
-#         curl \
-#         git \
-#         openssh-client \
-#         sudo \
-#         tmux \
-#         tree \
-#         build-essential \
-#         libgmp-dev \
-#         libcdd-dev \
-#         micro \
-#     && rm -rf /var/lib/apt/lists/*
-
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash \
@@ -38,16 +22,34 @@ RUN apt-get update \
         libgmp-dev \
         libcdd-dev \
         micro \
-        procps \
-        libstdc++6 \
-        libgcc-s1 \
-        libglib2.0-0 \
-        libnss3 \
-        libx11-6 \
-        libxkbfile1 \
-        libsecret-1-0 \
-        python3 \
+        gawk \
     && rm -rf /var/lib/apt/lists/*
+
+# RUN apt-get update \
+#     && apt-get install -y --no-install-recommends \
+#         bash \
+#         ca-certificates \
+#         curl \
+#         git \
+#         openssh-client \
+#         sudo \
+#         awk \
+#         tmux \
+#         tree \
+#         build-essential \
+#         libgmp-dev \
+#         libcdd-dev \
+#         micro \
+#         procps \
+#         libstdc++6 \
+#         libgcc-s1 \
+#         libglib2.0-0 \
+#         libnss3 \
+#         libx11-6 \
+#         libxkbfile1 \
+#         libsecret-1-0 \
+#         python3 \
+#     && rm -rf /var/lib/apt/lists/*
 
 # Create user/group with requested UID/GID, reusing existing GID if needed
 RUN set -eux; \

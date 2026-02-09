@@ -122,45 +122,6 @@ services:
             command -v uncache >/dev/null 2>&1 && uncache >/dev/null  # silent success & visible failure
           '
 
-
-          # # SET UP CLEANUP CACHE TIMER
-
-          # if [[ "${CACHE_CLEANUP_STRATEGY:-0}" == "2" ]]; then
-          #   mkdir -p /run/control/src /run/control/var /run/control/log
-          #   # Make /run/control/log writable for the hook (runs as $CONTAINER_USER).
-          #   # Keep it simple and reliable: log dir is ephemeral anyway.
-          #   chmod 777 /run/control/log
-          #   # Ensure the hook log file exists and is writable by $CONTAINER_USER
-          #   install -m 666 /dev/null /run/control/log/cache-cleanup.log || true
-          #   # Copy control scripts from the bind-mounted utils volume
-          #   cp -f /mnt/utils/control/cache-cleanup-hook.sh /run/control/src/cache-cleanup-hook.sh
-          #   cp -f /mnt/utils/control/cache-cleanup-timer.sh /run/control/src/cache-cleanup-timer.sh
-          #   chmod 755 /run/control/src/cache-cleanup-hook.sh /run/control/src/cache-cleanup-timer.sh
-          #   # Initialize shared countdown state (used by all terminals + timer)
-          #   : "$${CLEANUP_TIMER_FILE:=/run/control/var/cache-cleanup-time}"
-          #   : "$${CACHE_CLEANUP_TIME:=3600}"
-          #   mkdir -p "$$(dirname -- "$${CLEANUP_TIMER_FILE}")"
-          #   printf '%s\n' "$${CACHE_CLEANUP_TIME}" > "$${CLEANUP_TIMER_FILE}"
-          #   # Allow the interactive user to reset the timer via the bashrc hook
-          #   _cg="$$(id -gn "$${CONTAINER_USER}" 2>/dev/null || echo "$${CONTAINER_USER}")"
-          #   chown "$${CONTAINER_USER}:$${_cg}" "$${CLEANUP_TIMER_FILE}" 2>/dev/null || true
-          #   chmod 664 "$${CLEANUP_TIMER_FILE}" 2>/dev/null || true
-          #   : > "$${CLEANUP_TIMER_FILE}.lock"
-          #   chown "$${CONTAINER_USER}:$${_cg}" "$${CLEANUP_TIMER_FILE}.lock" 2>/dev/null || true
-          #   chmod 664 "$${CLEANUP_TIMER_FILE}.lock" 2>/dev/null || true
-          #   # Start timer in background (do not block the container startup)
-          #   setsid -f /run/control/src/cache-cleanup-timer.sh \
-          #     --state-file="$${CLEANUP_TIMER_FILE}" \
-          #     --timeout="$${CACHE_CLEANUP_TIME}" \
-          #     --hook="/run/control/src/cache-cleanup-hook.sh" \
-          #     --user="$${CONTAINER_USER}" \
-          #     --home="/home/$${CONTAINER_USER}" \
-          #     --tick="10" \
-          #     >/run/control/log/cache-cleanup-timer.stdout.log 2>&1 || true
-          # fi
-
-
-
           case "$${CACHE_CLEANUP_STRATEGY:-0}" in
             0)
               # No se hace nada

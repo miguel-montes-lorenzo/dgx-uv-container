@@ -24,6 +24,8 @@ set -euo pipefail
 
 cache_dir="${UV_CACHE_DIR:-$HOME/.cache/uv}"
 
+echo $cache_dir
+
 if [[ ! -d "$cache_dir" ]]; then
   echo "Cache directory does not exist: $cache_dir" >&2
   exit 1

@@ -39,22 +39,35 @@ __uv__read_global_pin() (
   return 1
 )
 
+# __uv__pick_bin_for_pin() (
+#   __uv__strict
+#   local pin="${1:-}" mm="" cand=""
+#   if [[ "$pin" =~ ^([0-9]+)\.([0-9]+) ]]; then
+#     mm="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+#     for cand in "python$mm" "python${mm/./}" "python3.${BASH_REMATCH[2]}"; do
+#       if command -v "$cand" >/dev/null 2>&1; then
+#         command -v "$cand"
+#         return 0
+#       fi
+#     done
+#   fi
+#   command -v python  >/dev/null 2>&1 && { command -v python;  return 0; }
+#   command -v python3 >/dev/null 2>&1 && { command -v python3; return 0; }
+#   return 1
+# )
+
+# PYTHON CHECK
+
 __uv__pick_bin_for_pin() (
   __uv__strict
-  local pin="${1:-}" mm="" cand=""
-  if [[ "$pin" =~ ^([0-9]+)\.([0-9]+) ]]; then
-    mm="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-    for cand in "python$mm" "python${mm/./}" "python3.${BASH_REMATCH[2]}"; do
-      if command -v "$cand" >/dev/null 2>&1; then
-        command -v "$cand"
-        return 0
-      fi
-    done
-  fi
-  command -v python  >/dev/null 2>&1 && { command -v python;  return 0; }
-  command -v python3 >/dev/null 2>&1 && { command -v python3; return 0; }
-  return 1
+  local pin="${1:-}"
+  [[ -n "$pin" ]] || return 1
+
+  # Intenta resolver el pin a un intérprete "managed" instalado.
+  UV_PYTHON_DOWNLOADS=never uv --no-progress python find --managed-python "$pin" 2>/dev/null \
+    || UV_PYTHON_DOWNLOADS=never uv --no-progress python find "$pin" 2>/dev/null
 )
+
 
 
 
@@ -113,7 +126,8 @@ _uv_install_python() (
     d="$(pwd -P 2>/dev/null || pwd)"
 
     while true; do
-      if [[ -f "$d/pyproject.toml" || -f "$d/uv.toml" || -d "$d/.git" ]]; then
+        if [[ -f "$d/pyproject.toml" || -f "$d/uv.toml" || -d "$d/.git" \
+           || -f "$d/.python-version" || -f "$d/.python-versions" ]]; then
         printf '%s\n' "$d"
         return 0
       fi
@@ -182,8 +196,7 @@ _uv_install_python() (
     __uv__strict
 
     local pin="${1:?missing pin}"
-    _tmo 1s env UV_PYTHON_DOWNLOADS=never uv --no-progress python find "$pin" \
-      >/dev/null 2>&1
+    _tmo 1s uv --no-progress python find --no-python-downloads --managed-python "$pin" >/dev/null 2>&1
   )
 
   _install_requested() (
@@ -223,10 +236,13 @@ _uv_install_python() (
         "This project requires Python version ${pin}. Do you want to install it? [y/n]: ")"
       if [[ "$ans" == "y" ]]; then
         _install_requested "$pin"
+       # If install fails, propagate failure
+       _pin_python_exists "$pin" || return 1
+       return 0
       fi
 
-      # IMPORTANT: "n" is not an error here; caller decides what to do.
-      return 0
+      # User declined required interpreter: stop caller.
+      return 1
     fi
   fi
 
@@ -248,6 +264,11 @@ _uv_install_python() (
   # Again: user saying "no" is not an error.
   return 0
 )
+
+
+
+
+
 
 
 
@@ -317,20 +338,45 @@ version() (
     exit 0
   fi
 
-  local pin="" bin=""
+  # local pin="" bin=""
+  # if [[ -f ".python-version" ]]; then
+  #   pin="$(sed -n '1p' .python-version || true)"
+  # else
+  #   pin="$(__uv__read_global_pin 2>/dev/null || true)"
+  # fi
+
+  # bin="$(__uv__pick_bin_for_pin "${pin}" 2>/dev/null || true)"
+  # if [[ -n "${bin}" ]]; then
+  #   exec "${bin}" --version
+  # fi
+
+  # PYTHON CHECK
+
+  local pin=""
   if [[ -f ".python-version" ]]; then
     pin="$(sed -n '1p' .python-version || true)"
   else
     pin="$(__uv__read_global_pin 2>/dev/null || true)"
   fi
 
-  bin="$(__uv__pick_bin_for_pin "${pin}" 2>/dev/null || true)"
-  if [[ -n "${bin}" ]]; then
-    exec "${bin}" --version
+  local py_path=""
+  if [[ -n "$pin" ]]; then
+    py_path="$(
+      UV_PYTHON_DOWNLOADS=never uv --no-progress python find --managed-python "$pin" 2>/dev/null \
+        || UV_PYTHON_DOWNLOADS=never uv --no-progress python find "$pin" 2>/dev/null \
+        || true
+    )"
   fi
+
+  if [[ -n "$py_path" ]]; then
+    exec uv run --python "$py_path" python -V
+  fi
+
 
   echo "Python (none)"
 )
+
+
 
 
 # -------------------------
@@ -344,8 +390,11 @@ venv() {
     "$@"
   )
 
-  _uv_install_python true || exit 1
-
+  # Ensure required python (prompt-based) once.
+  if ! __venv__strict _uv_install_python true; then
+    return 1
+  fi
+  
   __venv__abs_path() (
     __uv__strict
 
@@ -385,7 +434,11 @@ venv() {
     if [[ "$explicit_name_passed" == "1" ]]; then
       uv_out="$("${cmd[@]}" "$@" "$act" 2>&1 | sed '/^Activate with:/d')"
     else
-      uv_out="$("${cmd[@]}" "$@" 2>&1 | sed '/^Activate with:/d')"
+      uv_out="$(
+        env UV_PYTHON_DOWNLOADS=never "${cmd[@]}" "$@" 2>&1 \
+          | sed '/^Activate with:/d'
+      )"
+
     fi
 
     if [[ -n "$uv_out" ]]; then
@@ -394,6 +447,8 @@ venv() {
     else
       printf 'Creating virtual environment at: %s\n' "$act_abs"
     fi
+    # Must exist after creation, otherwise treat as failure.
+    [[ -f "$activate_path" ]] || return 1
   )
 
   __venv__ensure_cfg_prompt() (
@@ -541,10 +596,6 @@ venv() {
   local prompt_name=""
   prompt_name="$(basename "$(pwd -P)")"
 
-  if ! __venv__strict _uv_install_python true; then  # ??
-    return 1
-  fi
-
   # Behavior difference:
   # - venv (no name): if .venv exists, just activate (no creation).
   # - venv <name>: if it exists, ask to replace; if "yes", pass --clear to uv.
@@ -594,6 +645,16 @@ venv() {
   fi
   source "${activate_path}"
 }
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -677,7 +738,6 @@ lpin() (
 # -------------------------
 gpin() (
   __uv__strict
-
   : "${XDG_CONFIG_HOME:=$HOME/.config}"
 
   local arg="${1-}"
@@ -696,15 +756,14 @@ gpin() (
       return 0
     done
     echo "(none)"
-    return 0
   )
 
   _rm_all() (
     __uv__strict
     rm -f -- "${pin_files[@]}"
-    return 0
   )
 
+  # Set / clear pin
   if [[ -n "$arg" ]]; then
     if [[ "$arg" == "none" ]]; then
       _rm_all
@@ -712,7 +771,7 @@ gpin() (
       exit 0
     fi
 
-    # Support pinning by interpreter path or by version/spec.
+    # Allow interpreter path
     if [[ "$arg" == /* || "$arg" == ./* || "$arg" == ../* || -e "$arg" ]]; then
       local p=""
       if command -v realpath >/dev/null 2>&1; then
@@ -726,13 +785,26 @@ gpin() (
       arg="$p"
     fi
 
-    if ! uv python pin "$arg" --global >/dev/null; then
+    uv python pin "$arg" --global >/dev/null || {
       echo "[gpin] ERROR: uv could not pin: $arg" >&2
       exit 1
+    }
+  fi
+
+  # Validate existing pin
+  local val
+  val="$(_print)"
+
+  if [[ "$val" != "(none)" ]]; then
+    if ! uv python find "$val" >/dev/null 2>&1; then
+      # Broken global pin → remove it
+      _rm_all
+      echo "(none)"
+      exit 0
     fi
   fi
 
-  _print
+  printf '%s\n' "$val"
 )
 
 
@@ -742,7 +814,7 @@ gpin() (
 # -------------------------
 interpreters() (
   __uv__strict
-  _uv_install_python true
+  _uv_install_python true || exit 1
 
   local timeout_bin=""
   timeout_bin="$(command -v timeout 2>/dev/null || printf '')"
@@ -992,59 +1064,50 @@ PY
 
 
 
-# -------------------------
-# uncache: uncache uv cache using hardlink GC + venv-installed wheels keep
-# -------------------------
 uncache() (
-  __uv__strict
-
-  _uv_install_python false
+  # __uv__strict
+  _uv_install_python true || return 1
 
   : "${UV_CACHE_DIR:=$HOME/.cache/uv}"
-
   local DEBUG="${UV_SHIMS_DEBUG:-0}"
 
   log() (
     __uv__strict
-
     if (( DEBUG )); then
-      printf '[uv-cache-gc] %s\n' "$*" >&2
+      printf '[uv-cache-nlink-gc] %s\n' "$*" >&2
     fi
     return 0
   )
 
-  normalize_project_name() (
-    __uv__strict
-
-    local name="${1:?missing name}"
-    name="${name,,}"
-    name="${name//_/-}"
-    name="${name//./-}"
-    name="${name//+/-}"
-    printf '%s' "$name"
-  )
-
   has_linked_files() (
     __uv__strict
-
     local dir="${1:?missing dir}"
-    find "$dir" -type f -print0 2>/dev/null \
-      | xargs -0 -r stat -c '%h' -- 2>/dev/null \
-      | awk '$1 > 1 { found=1; exit } END { exit !found }'
+
+    local hit=""
+    hit="$(find "$dir" -xdev -type f -links +1 -print -quit 2>/dev/null || true)"
+
+    [[ -n "$hit" ]]
   )
 
   _dir_size_bytes() (
     __uv__strict
-
     local d="${1:?missing dir}"
     du -sb -- "$d" 2>/dev/null | awk '{print $1}'
   )
 
   _fmt_gb() (
     __uv__strict
-
     local b="${1:?missing bytes}"
     awk -v b="$b" 'BEGIN { printf "%.2fGB", b / (1024*1024*1024) }'
+  )
+
+  _norm_proj() (
+    __uv__strict
+    local name="${1:?missing name}"
+    name="${name,,}"
+    name="${name//_/-}"
+    name="${name//./-}"
+    printf '%s' "$name"
   )
 
   if [[ ! -d "$UV_CACHE_DIR" ]]; then
@@ -1052,152 +1115,314 @@ uncache() (
     exit 1
   fi
 
-  local _uv_cache_before_bytes=0
-  _uv_cache_before_bytes="$(_dir_size_bytes "$UV_CACHE_DIR")"
+  local before_bytes
+  before_bytes="$(_dir_size_bytes "$UV_CACHE_DIR")"
 
   log "UV_CACHE_DIR=$UV_CACHE_DIR"
 
-  local -a archive_roots=()
-  mapfile -d '' -t archive_roots < <(
-    find "$UV_CACHE_DIR" -type d -name '*archive*' -print0 2>/dev/null || true
-  )
-
-  local -a wheels_roots=()
-  mapfile -d '' -t wheels_roots < <(
-    find "$UV_CACHE_DIR" -type d -name '*wheels*' -print0 2>/dev/null || true
-  )
-
-  # ---------------------------------------------------------------------------
-  # 1) Prune archive objects that have ONLY single-linked files
-  # ---------------------------------------------------------------------------
-  local archive_root=""
-  for archive_root in "${archive_roots[@]}"; do
+  # 1) archive/: borrar objetos sin hardlinks activos
+  local archive_root
+  while IFS= read -r -d '' archive_root; do
     [[ -d "$archive_root" ]] || continue
 
-    local -a obj_dirs=()
-    mapfile -d '' -t obj_dirs < <(
-      find "$archive_root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null || true
-    )
-
-    local obj_dir=""
-    for obj_dir in "${obj_dirs[@]}"; do
+    local obj_dir
+    while IFS= read -r -d '' obj_dir; do
       [[ -d "$obj_dir" ]] || continue
 
       if has_linked_files "$obj_dir"; then
         log "KEEP archive object: $obj_dir"
-        continue
+      else
+        log "DELETE archive object: $obj_dir"
+        rm -rf -- "$obj_dir"
       fi
+    done < <(
+      find "$archive_root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null
+    )
 
-      log "DELETE archive object: $obj_dir"
-      rm -rf -- "$obj_dir"
-    done
-
-    if [[ -z "$(ls -A "$archive_root" 2>/dev/null)" ]]; then
-      rmdir -- "$archive_root" 2>/dev/null || true
-    fi
-  done
-
-  # ---------------------------------------------------------------------------
-  # 2) Build keep-list from installed packages in UV-managed venvs under ~
-  # ---------------------------------------------------------------------------
-  local keep_projects_file=""
-  keep_projects_file="$(mktemp)"
-  trap 'rm -f -- "$keep_projects_file" 2>/dev/null || true' EXIT
-
-  local -a candidate_dirs=()
-  mapfile -t candidate_dirs < <(
-    find -L ~ \
-      \( -type d -name '.*' -prune \) \
-      -o \
-      \( \
-        \( -type f \( \
-            -name '.venv' \
-            -o -name 'uv.lock' \
-            -o -name 'pyproject.toml' \
-            -o -name 'requirements.txt' \
-          \) -printf '%h\n' \
-        \) \
-        -o \
-        \( -type d -name '.venv' -printf '%h\n' \) \
-      \) \
-      | sort -u
+    # borrar root vacío
+    [[ -z "$(ls -A "$archive_root" 2>/dev/null)" ]] && rmdir "$archive_root" 2>/dev/null || true
+  done < <(
+    find "$UV_CACHE_DIR" -type d -name '*archive*' -print0 2>/dev/null
   )
 
-  local dir=""
-  for dir in "${candidate_dirs[@]}"; do
-    [[ -d "$dir/.venv" && -f "$dir/.venv/pyvenv.cfg" ]] || continue
-
-    local metadata_path=""
-    while IFS= read -r -d '' metadata_path; do
-      local dist_name=""
-      dist_name="$(
-        awk -F': *' 'tolower($1)=="name" { print $2; exit }' \
-          "$metadata_path" 2>/dev/null || true
-      )"
-      [[ -n "$dist_name" ]] || continue
-
-      printf '%s\n' "$(normalize_project_name "$dist_name")" \
-        >>"$keep_projects_file"
-    done < <(
-      find "$dir/.venv" -type f \
-        -path '*/lib/python*/site-packages/*.dist-info/METADATA' \
-        -print0 2>/dev/null || true
-    )
-  done
-
-  if [[ -s "$keep_projects_file" ]]; then
-    sort -u "$keep_projects_file" -o "$keep_projects_file"
-  fi
-
-  # Load keep-list into an associative array to avoid grep/rg and be fast.
-  declare -A KEEP=()
-  if [[ -s "$keep_projects_file" ]]; then
-    local k=""
-    while IFS= read -r k; do
-      [[ -n "$k" ]] || continue
-      KEEP["$k"]=1
-    done <"$keep_projects_file"
-  fi
-
-  # ---------------------------------------------------------------------------
-  # 3) Prune wheels not in keep-list
-  # ---------------------------------------------------------------------------
-  local wheels_root=""
-  for wheels_root in "${wheels_roots[@]}"; do
+  # 2) wheels/pypi/: borrar proyectos sin hardlinks activos
+  local wheels_root
+  while IFS= read -r -d '' wheels_root; do
     local pypi_root="$wheels_root/pypi"
     [[ -d "$pypi_root" ]] || continue
 
-    local proj_dir=""
+    local proj_dir
     while IFS= read -r -d '' proj_dir; do
-      local proj_name=""
-      proj_name="$(basename -- "$proj_dir")"
+      [[ -d "$proj_dir" ]] || continue
 
-      if [[ -n "${KEEP[$proj_name]:-}" ]]; then
-        log "KEEP wheels project dir: $proj_dir"
-        continue
+      if has_linked_files "$proj_dir"; then
+        log "KEEP wheels project: $proj_dir"
+      else
+        log "DELETE wheels project: $proj_dir"
+        rm -rf -- "$proj_dir"
       fi
-
-      log "DELETE wheels project dir: $proj_dir"
-      rm -rf -- "$proj_dir"
     done < <(
-      find "$pypi_root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null || true
+      find "$pypi_root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null
     )
-  done
+  done < <(
+    find "$UV_CACHE_DIR" -type d -name '*wheels*' -print0 2>/dev/null
+  )
 
-  local _uv_cache_after_bytes=0
-  _uv_cache_after_bytes="$(_dir_size_bytes "$UV_CACHE_DIR")"
+  # 2.5) simple-v*/pypi/*.rkyv: borrar rkyv de proyectos que no están en uso
+  local used_tmp
+  used_tmp="$(mktemp -p "${TMPDIR:-/tmp}" uv-used-projs.XXXXXX)"
+  trap 'rm -f -- "$used_tmp"' RETURN 2>/dev/null || true
 
-  local _uv_cache_released_bytes=0
-  _uv_cache_released_bytes=$(( _uv_cache_before_bytes - _uv_cache_after_bytes ))
-  if (( _uv_cache_released_bytes < 0 )); then
-    _uv_cache_released_bytes=0
-  fi
+  # Construye un set de proyectos "en uso" a partir de wheels/pypi con hardlinks.
+  while IFS= read -r -d '' wheels_root; do
+    local pypi_root="$wheels_root/pypi"
+    [[ -d "$pypi_root" ]] || continue
 
-  printf 'uv cache released storage: %s\n' \
-    "$(_fmt_gb "$_uv_cache_released_bytes")"
-  printf 'uv cache remaining storage: %s\n' \
-    "$(_fmt_gb "$_uv_cache_after_bytes")"
+    local proj_dir
+    while IFS= read -r -d '' proj_dir; do
+      [[ -d "$proj_dir" ]] || continue
+
+      if has_linked_files "$proj_dir"; then
+        _norm_proj "$(basename -- "$proj_dir")" >>"$used_tmp"
+      fi
+    done < <(
+      find "$pypi_root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null
+    )
+  done < <(
+    find "$UV_CACHE_DIR" -type d -name '*wheels*' -print0 2>/dev/null
+  )
+
+  sort -u -o "$used_tmp" "$used_tmp" 2>/dev/null || true
+
+  local simple_root
+  while IFS= read -r -d '' simple_root; do
+    local pypi_simple="$simple_root/pypi"
+    [[ -d "$pypi_simple" ]] || continue
+
+    local rkyv
+    while IFS= read -r -d '' rkyv; do
+      [[ -f "$rkyv" ]] || continue
+
+      local base proj
+      base="$(basename -- "$rkyv")"
+      proj="$(_norm_proj "${base%.rkyv}")"
+
+      if grep -Fxq -- "$proj" "$used_tmp" 2>/dev/null; then
+        log "KEEP simple rkyv: $rkyv"
+      else
+        log "DELETE simple rkyv: $rkyv"
+        rm -f -- "$rkyv"
+      fi
+    done < <(
+      find "$pypi_simple" -maxdepth 1 -type f -name '*.rkyv' -print0 2>/dev/null
+    )
+
+    [[ -z "$(ls -A "$pypi_simple" 2>/dev/null)" ]] && rmdir "$pypi_simple" 2>/dev/null || true
+    [[ -z "$(ls -A "$simple_root" 2>/dev/null)" ]] && rmdir "$simple_root" 2>/dev/null || true
+  done < <(
+    find "$UV_CACHE_DIR" -type d -name 'simple-v*' -print0 2>/dev/null
+  )
+
+  # 3) stats finales
+  local after_bytes
+  after_bytes="$(_dir_size_bytes "$UV_CACHE_DIR")"
+
+  local released=$(( before_bytes - after_bytes ))
+  (( released < 0 )) && released=0
+
+  printf 'uv cache released storage: %s\n' "$(_fmt_gb "$released")"
+  printf 'uv cache remaining storage: %s\n' "$(_fmt_gb "$after_bytes")"
 )
+
+
+
+
+
+
+
+
+
+# -------------------------
+# environments:
+# -------------------------
+environments() (
+  _uv_install_python true || return 1
+  : "${UV_ENVS_WORKERS:=16}"
+  : "${UV_ENVS_ROOT:=$HOME}"
+
+  # command python3 - "$UV_ENVS_ROOT" <<'PY'
+  UV_PYTHON_DOWNLOADS=never uv --no-progress run python - "$UV_ENVS_ROOT" <<'PY'
+from __future__ import annotations
+
+import concurrent.futures
+import os
+import sys
+from dataclasses import dataclass
+from typing import Iterator
+
+
+@dataclass(frozen=True)
+class EnvRow:
+    """A discovered environment row."""
+    path: str
+    is_uv: bool
+
+
+def _is_environment_dir(d: str) -> bool:
+    """Return True if d looks like a Python venv directory.
+
+    Signature:
+      - pyvenv.cfg exists
+      - bin/ exists
+      - bin/activate exists
+      - bin/python exists (file or symlink)
+    """
+    cfg: str = os.path.join(d, "pyvenv.cfg")
+    bin_dir: str = os.path.join(d, "bin")
+    act: str = os.path.join(bin_dir, "activate")
+    py: str = os.path.join(bin_dir, "python")
+
+    if not os.path.isfile(cfg):
+        return False
+    if not os.path.isdir(bin_dir):
+        return False
+    if not os.path.isfile(act):
+        return False
+    if not (os.path.isfile(py) or os.path.islink(py)):
+        return False
+    return True
+
+
+def _iter_env_dirs(root_dir: str) -> Iterator[str]:
+    """Find environment dirs under root with limited recursion inside dot-dirs.
+
+    Rule:
+      - For directories whose name starts with '.', only recurse ONE additional level.
+    """
+    queue: list[tuple[str, int]] = [(root_dir, -1)]
+
+    while queue:
+        cur, dot_budget = queue.pop()
+
+        if _is_environment_dir(cur):
+            yield cur
+
+        try:
+            with os.scandir(cur) as it:
+                for ent in it:
+                    if not ent.is_dir(follow_symlinks=False):
+                        continue
+
+                    is_dot: bool = ent.name.startswith(".")
+                    if dot_budget == 0:
+                        continue
+
+                    if dot_budget == -1:
+                        next_budget: int = 1 if is_dot else -1
+                        queue.append((ent.path, next_budget))
+                    else:
+                        queue.append((ent.path, 0))
+        except OSError:
+            continue
+
+
+def _abs_path(p: str) -> str:
+    """Return an absolute path (best-effort, resolving symlinks)."""
+    try:
+        return os.path.realpath(p)
+    except OSError:
+        return os.path.abspath(p)
+
+
+def _is_uv_by_python_symlink(env_dir: str) -> bool:
+    """Detect uv-managed env by checking python* symlinks in env_dir/bin.
+
+    Heuristic:
+      - For any file in <env_dir>/bin with 'python' substring in its name:
+          if it is a symlink AND its resolved target path contains 'uv',
+          then env is considered uv-managed.
+
+    Args:
+        env_dir: Environment directory path.
+
+    Returns:
+        True if heuristic matches, otherwise False.
+    """
+    bin_dir: str = os.path.join(env_dir, "bin")
+    try:
+        with os.scandir(bin_dir) as it:
+            for ent in it:
+                name: str = ent.name
+                if "python" not in name:
+                    continue
+
+                # Use path-based check because DirEntry.is_symlink() may follow
+                # filesystem quirks; os.path.islink is definitive for the path.
+                candidate: str = os.path.join(bin_dir, name)
+                if not os.path.islink(candidate):
+                    continue
+
+                try:
+                    target: str = os.path.realpath(candidate)
+                except OSError:
+                    continue
+
+                if "uv" in target:
+                    return True
+    except OSError:
+        return False
+
+    return False
+
+
+def _tag_env(env_dir: str) -> EnvRow:
+    """Create an EnvRow for env_dir."""
+    is_uv: bool = _is_uv_by_python_symlink(env_dir=env_dir)
+    return EnvRow(path=_abs_path(env_dir), is_uv=is_uv)
+
+
+def main(argv: list[str]) -> int:
+    """Entry point: print absolute env paths, with [uv] tag when applicable."""
+    root_dir: str = argv[1] if len(argv) > 1 else os.path.expanduser("~")
+
+    envs: list[str] = list(_iter_env_dirs(root_dir=root_dir))
+    if not envs:
+        return 0
+
+    max_workers_env: str = os.environ.get("UV_ENVS_WORKERS", "").strip()
+    max_workers: int = int(max_workers_env) if max_workers_env else 16
+    workers: int = max(1, min(max_workers, (os.cpu_count() or 4) * 2))
+
+    seen: set[str] = set()
+    rows: list[EnvRow] = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(_tag_env, d) for d in envs]
+        for fut in concurrent.futures.as_completed(futs):
+            try:
+                row: EnvRow = fut.result()
+            except Exception:
+                continue
+
+            if row.path in seen:
+                continue
+            seen.add(row.path)
+            rows.append(row)
+
+    rows.sort(key=lambda r: r.path)
+    for r in rows:
+        suffix: str = " [uv]" if r.is_uv else ""
+        sys.stdout.write(f"{r.path}{suffix}\n")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+PY
+)
+
+
 
 
 
@@ -1213,9 +1438,9 @@ uncache() (
 #   (for the selected mode), not additive accumulation.
 # -------------------------
 lock() (
-  __uv__strict
+  # __uv__strict
 
-  _uv_install_python true
+  _uv_install_python true || exit 1
 
   die() {
     # Controlled failure: do not trigger ERR handler, and stop the subshell now.
@@ -1266,7 +1491,7 @@ lock() (
   local venv_dir="${VIRTUAL_ENV-}"
   [[ -n "$venv_dir" ]] || die "no active environment (VIRTUAL_ENV is not set)"
   command -v uv >/dev/null 2>&1 || die "uv not found in PATH"
-  command -v python >/dev/null 2>&1 || die "python not found in PATH"
+  # command -v python >/dev/null 2>&1 || die "python not found in PATH"
 
   normalize_name() (
     __uv__strict
@@ -1346,7 +1571,7 @@ lock() (
   gather_deps_from_src_py() (
     __uv__strict
 
-    python - << 'PY'
+    UV_PYTHON_DOWNLOADS=never uv --no-progress run python - << 'PY'
 from __future__ import annotations
 
 import ast
@@ -1427,7 +1652,7 @@ PY
     __uv__strict
 
     local dist_name_norm="${1:?missing dist_name_norm}"
-    python - << PY
+    UV_PYTHON_DOWNLOADS=never uv --no-progress run python - << PY
 from __future__ import annotations
 
 import re
@@ -1452,7 +1677,7 @@ PY
   read_current_declared_deps() (
     __uv__strict
 
-    python - << 'PY'
+    UV_PYTHON_DOWNLOADS=never uv --no-progress run python - << 'PY'
 from __future__ import annotations
 
 import re
@@ -1506,7 +1731,7 @@ PY
       shopt -s inherit_errexit 2>/dev/null || true
       trap 'echo "ERROR en ${FUNCNAME[0]:-MAIN} línea $LINENO: $BASH_COMMAND" >&2' ERR
       cd "$project_root"
-      uv init >/dev/null
+      uv init --bare --vcs none && python --version >> .python-version >/dev/null
     )
   fi
 

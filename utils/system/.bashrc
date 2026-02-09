@@ -152,7 +152,7 @@ exit() {
     DEBUG=0 "$HOME/.config/uv/uv-cache-dependency-clean.sh" >/dev/null 2>&1 || true
     find /mnt/workdata/uv_cache -mindepth 1 -delete >/dev/null 2>&1 || true
   fi
-  command -v uncache >/dev/null 2>&1 && uncache >/dev/null  # silent success & visible failure
+  command -v uncache >/dev/null 2>&1 && uncache >/dev/null # silent success & visible failure
   builtin exit
 }
 
@@ -166,8 +166,8 @@ case "${DISPLAY_INFO_AT_STARTUP:-false}" in
     fi
     echo ""
     echo "INSTALLED PYTHON INTERPRETERS:"
-    [[ $- == *i* && -z "${__PY_DELAYED:-}" ]] && { compgen -G "${XDG_DATA_HOME:-$HOME/.local/share}/uv/python/cpython-*/bin/python*" >/dev/null || { __PY_DELAYED=1; sleep 3; }; }  # sleep 3 seconds if no python installed
-    command -v uncache >/dev/null 2>&1 && interpreters || true
+    command -v uncache >/dev/null 2>&1 && { uncache >/dev/null & disown; }
+    interpreters || true
     echo ""
     echo "EFFECTIVE STORAGE:"
     storage
