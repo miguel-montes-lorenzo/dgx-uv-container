@@ -122,6 +122,9 @@ services:
             command -v uncache >/dev/null 2>&1 && uncache >/dev/null  # silent success & visible failure
           '
 
+
+          # SET UP CLEANUP CACHE CLEANUP METHOD
+
           case "$${CACHE_CLEANUP_STRATEGY:-0}" in
             0)
               # No se hace nada
