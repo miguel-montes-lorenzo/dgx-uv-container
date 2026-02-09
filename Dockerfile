@@ -8,6 +8,22 @@ ARG USERNAME=
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# RUN apt-get update \
+#     && apt-get install -y --no-install-recommends \
+#         bash \
+#         ca-certificates \
+#         curl \
+#         git \
+#         openssh-client \
+#         sudo \
+#         tmux \
+#         tree \
+#         build-essential \
+#         libgmp-dev \
+#         libcdd-dev \
+#         micro \
+#     && rm -rf /var/lib/apt/lists/*
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash \
@@ -22,6 +38,15 @@ RUN apt-get update \
         libgmp-dev \
         libcdd-dev \
         micro \
+        procps \
+        libstdc++6 \
+        libgcc-s1 \
+        libglib2.0-0 \
+        libnss3 \
+        libx11-6 \
+        libxkbfile1 \
+        libsecret-1-0 \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create user/group with requested UID/GID, reusing existing GID if needed
@@ -52,27 +77,6 @@ RUN mkdir -p "/home/${USERNAME}/.ssh" "/home/${USERNAME}/.config" "/home/${USERN
 # # Copy README.md
 # COPY --chown=${UID}:${GID} ./README.md "/home/${USERNAME}/README.md"
 
-
-
 USER ${USERNAME}
-
-
-
-
-# # Compose can override; keep a default
-# ENV UV_CACHE_DIR="/home/${USERNAME}/.cache/uv"
-
-# # This installs uv
-# RUN bash "/home/${USERNAME}/.config/uv/install.sh"
-
-# # Ensure uv is visible in non-interactive RUN steps
-# ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
-# ENV UV_TOOL_BIN_DIR="/home/${USERNAME}/.local/bin"
-
-# # Install ruff as a uv-managed tool
-# RUN uv tool install ruff --force
-# RUN uv tool install ty --force
-# RUN uv tool install pytest --force
-# RUN uv tool install "dvc[ssh,s3,gcs,azure]" --force
 
 CMD ["bash", "-lc", "sleep infinity"]

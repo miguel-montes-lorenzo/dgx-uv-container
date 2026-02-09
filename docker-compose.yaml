@@ -12,6 +12,23 @@ services:
         USERNAME: "${CONTAINER_USER}"
     networks: [alumnos]
 
+    labels:
+      - >-
+        devcontainer.metadata=[{
+          "remoteUser":"${CONTAINER_USER}",
+          "containerUser":"${CONTAINER_USER}",
+          "customizations":{
+            "vscode":{
+              "extensions":[
+                "ms-python.python",
+                "ms-toolsai.jupyter",
+                "ms-python.vscode-pylance",
+                "charliermarsh.ruff"
+              ]
+            }
+          }
+        }]
+
     volumes:
       - ${HOST_VOLUME_PATH}:/mnt/workdata/
       - ./utils/:/mnt/utils/
@@ -30,7 +47,8 @@ services:
       # cleanup cache everytime a 
       # - PERSISTENT_CACHE=true
       - COMPOSE_STATE_DIR=${COMPOSE_STATE_DIR}
-      - CLEANUP_STATE_DIR=${CLEANUP_STATE_DIR}
+      - CACHE_CLEANUP_STRATEGY=${CACHE_CLEANUP_STRATEGY:-0}
+      - CLEANUP_TIMER_FILE=${CLEANUP_TIMER_FILE}
       - CACHE_CLEANUP_TIME=${CACHE_CLEANUP_TIME}
 
       - NVIDIA_VISIBLE_DEVICES=all
@@ -48,7 +66,6 @@ services:
           mkdir -p "$$(dirname -- "$${COMPOSE_STATE_DIR}")"
           printf '%s\n' true > "$${COMPOSE_STATE_DIR}"
           echo true > ${COMPOSE_STATE_DIR}
-
           HOME="/home/$$CONTAINER_USER"
           mkdir -p $$HOME
           chown -R "${HOST_UID}:${HOST_GID}" $$HOME || true
@@ -60,7 +77,6 @@ services:
           rm -f $$HOME/.bashrc
           cp /mnt/utils/system/.bashrc $$HOME/.bashrc
           cp /mnt/utils/system/bash.bashrc /etc/bash.bashrc
-
           rm -rf $$HOME/.config
           mkdir -p $$HOME/.config
           cp -a /mnt/utils/.config/. $$HOME/.config/
@@ -72,25 +88,20 @@ services:
             /mnt/workdata/${DATA_SUBDIR} \
             /mnt/workdata/${UV_CACHE_SUBDIR} \
             /mnt/workdata/${SSH_SUBDIR}
-
           rm -rf $$HOME/data
           ln -sfn /mnt/workdata/${DATA_SUBDIR} $$HOME/data
-
-          mkdir -p $$HOME/.cache
-          rm -rf $$HOME/.cache/uv
-          # ln -sfn /mnt/workdata/${UV_CACHE_SUBDIR} $$HOME/.cache/uv
-
+          rm -rf $$HOME/.cache
+          ln -sfn /mnt/workdata/${CACHE_SUBDIR} $$HOME/.cache
           rm -rf $$HOME/.ssh
           ln -sfn /mnt/workdata/${SSH_SUBDIR} $$HOME/.ssh
-
           chown -R ${HOST_UID}:${HOST_GID} /mnt/workdata || true
           chown -R ${HOST_UID}:${HOST_GID} $$HOME || true
-
           chmod 700 /mnt/workdata/${SSH_SUBDIR}
           chmod 600 /mnt/workdata/${SSH_SUBDIR}/* 2>/dev/null || true
 
 
           # SET UP UV
+
           su - "${CONTAINER_USER}" -s /bin/bash -c '
             set -Eeuo pipefail
             # Force correct HOME even if something preserves environment incorrectly
@@ -112,55 +123,91 @@ services:
           '
 
 
-          echo "uv setup done"
+          # # SET UP CLEANUP CACHE TIMER
+
+          # if [[ "${CACHE_CLEANUP_STRATEGY:-0}" == "2" ]]; then
+          #   mkdir -p /run/control/src /run/control/var /run/control/log
+          #   # Make /run/control/log writable for the hook (runs as $CONTAINER_USER).
+          #   # Keep it simple and reliable: log dir is ephemeral anyway.
+          #   chmod 777 /run/control/log
+          #   # Ensure the hook log file exists and is writable by $CONTAINER_USER
+          #   install -m 666 /dev/null /run/control/log/cache-cleanup.log || true
+          #   # Copy control scripts from the bind-mounted utils volume
+          #   cp -f /mnt/utils/control/cache-cleanup-hook.sh /run/control/src/cache-cleanup-hook.sh
+          #   cp -f /mnt/utils/control/cache-cleanup-timer.sh /run/control/src/cache-cleanup-timer.sh
+          #   chmod 755 /run/control/src/cache-cleanup-hook.sh /run/control/src/cache-cleanup-timer.sh
+          #   # Initialize shared countdown state (used by all terminals + timer)
+          #   : "$${CLEANUP_TIMER_FILE:=/run/control/var/cache-cleanup-time}"
+          #   : "$${CACHE_CLEANUP_TIME:=3600}"
+          #   mkdir -p "$$(dirname -- "$${CLEANUP_TIMER_FILE}")"
+          #   printf '%s\n' "$${CACHE_CLEANUP_TIME}" > "$${CLEANUP_TIMER_FILE}"
+          #   # Allow the interactive user to reset the timer via the bashrc hook
+          #   _cg="$$(id -gn "$${CONTAINER_USER}" 2>/dev/null || echo "$${CONTAINER_USER}")"
+          #   chown "$${CONTAINER_USER}:$${_cg}" "$${CLEANUP_TIMER_FILE}" 2>/dev/null || true
+          #   chmod 664 "$${CLEANUP_TIMER_FILE}" 2>/dev/null || true
+          #   : > "$${CLEANUP_TIMER_FILE}.lock"
+          #   chown "$${CONTAINER_USER}:$${_cg}" "$${CLEANUP_TIMER_FILE}.lock" 2>/dev/null || true
+          #   chmod 664 "$${CLEANUP_TIMER_FILE}.lock" 2>/dev/null || true
+          #   # Start timer in background (do not block the container startup)
+          #   setsid -f /run/control/src/cache-cleanup-timer.sh \
+          #     --state-file="$${CLEANUP_TIMER_FILE}" \
+          #     --timeout="$${CACHE_CLEANUP_TIME}" \
+          #     --hook="/run/control/src/cache-cleanup-hook.sh" \
+          #     --user="$${CONTAINER_USER}" \
+          #     --home="/home/$${CONTAINER_USER}" \
+          #     --tick="10" \
+          #     >/run/control/log/cache-cleanup-timer.stdout.log 2>&1 || true
+          # fi
 
 
-          # systemd-run --user --unit=myjob --replace your_command 
 
-          # SET UP CLEANUP CACHE TIMER
-          # (runs in background; no systemd required)
+          case "$${CACHE_CLEANUP_STRATEGY:-0}" in
+            0)
+              # No se hace nada
+              ;;
+            1|2)
+              mkdir -p /run/control/src /run/control/var /run/control/log
+              chmod 777 /run/control/log
+              install -m 666 /dev/null /run/control/log/cache-cleanup.log || true
 
-          mkdir -p /run/control/src /run/control/var /run/control/log
+              cp -f /mnt/utils/control/cache-cleanup-hook.sh /run/control/src/cache-cleanup-hook.sh
+              cp -f /mnt/utils/control/cache-cleanup-timer.sh /run/control/src/cache-cleanup-timer.sh
+              chmod 755 /run/control/src/cache-cleanup-hook.sh /run/control/src/cache-cleanup-timer.sh
 
-          # Make /run/control/log writable for the hook (runs as $CONTAINER_USER).
-          # Keep it simple and reliable: log dir is ephemeral anyway.
-          chmod 777 /run/control/log
+              : "$${CLEANUP_TIMER_FILE:=/run/control/var/cache-cleanup-time}"
+              : "$${CACHE_CLEANUP_TIME:=3600}"
 
-          # Ensure the hook log file exists and is writable by $CONTAINER_USER
-          install -m 666 /dev/null /run/control/log/cache-cleanup.log || true
+              mkdir -p "$$(dirname -- "$${CLEANUP_TIMER_FILE}")"
+              printf '%s\n' "$${CACHE_CLEANUP_TIME}" > "$${CLEANUP_TIMER_FILE}"
 
-          # Copy control scripts from the bind-mounted utils volume
-          cp -f /mnt/utils/control/cache-cleanup-hook.sh /run/control/src/cache-cleanup-hook.sh
-          cp -f /mnt/utils/control/cache-cleanup-timer.sh /run/control/src/cache-cleanup-timer.sh
-          chmod 755 /run/control/src/cache-cleanup-hook.sh /run/control/src/cache-cleanup-timer.sh
+              _cg="$$(id -gn "$${CONTAINER_USER}" 2>/dev/null || echo "$${CONTAINER_USER}")"
+              chown "$${CONTAINER_USER}:$$_cg" "$${CLEANUP_TIMER_FILE}" 2>/dev/null || true
+              chmod 664 "$${CLEANUP_TIMER_FILE}" 2>/dev/null || true
 
-          # Initialize shared countdown state (used by all terminals + timer)
-          : "$${CLEANUP_STATE_DIR:=/run/control/var/cache-cleanup-time}"
-          : "$${CACHE_CLEANUP_TIME:=3600}"
-          mkdir -p "$$(dirname -- "$${CLEANUP_STATE_DIR}")"
-          printf '%s\n' "$${CACHE_CLEANUP_TIME}" > "$${CLEANUP_STATE_DIR}"
+              : > "$${CLEANUP_TIMER_FILE}.lock"
+              chown "$${CONTAINER_USER}:$$_cg" "$${CLEANUP_TIMER_FILE}.lock" 2>/dev/null || true
+              chmod 664 "$${CLEANUP_TIMER_FILE}.lock" 2>/dev/null || true
 
-          # Allow the interactive user to reset the timer via the bashrc hook
-          _cg="$$(id -gn "$${CONTAINER_USER}" 2>/dev/null || echo "$${CONTAINER_USER}")"
-          chown "$${CONTAINER_USER}:$${_cg}" "$${CLEANUP_STATE_DIR}" 2>/dev/null || true
-          chmod 664 "$${CLEANUP_STATE_DIR}" 2>/dev/null || true
-          : > "$${CLEANUP_STATE_DIR}.lock"
-          chown "$${CONTAINER_USER}:$${_cg}" "$${CLEANUP_STATE_DIR}.lock" 2>/dev/null || true
-          chmod 664 "$${CLEANUP_STATE_DIR}.lock" 2>/dev/null || true
+              nohup /bin/bash /run/control/src/cache-cleanup-timer.sh \
+                --mode="$${CACHE_CLEANUP_STRATEGY}" \
+                --state-file="$${CLEANUP_TIMER_FILE}" \
+                --timeout="$${CACHE_CLEANUP_TIME}" \
+                --hook="/run/control/src/cache-cleanup-hook.sh" \
+                --user="$${CONTAINER_USER}" \
+                --home="/home/$${CONTAINER_USER}" \
+                --tick="10" \
+                >/run/control/log/cache-cleanup-timer.stdout.log 2>&1 &
+              ;;
+            *)
+              echo "Invalid CACHE_CLEANUP_STRATEGY='$${CACHE_CLEANUP_STRATEGY}'" >&2
+              ;;
+          esac
 
-          # Start timer in background (do not block the container startup)
-          setsid -f /run/control/src/cache-cleanup-timer.sh \
-            --state-file="$${CLEANUP_STATE_DIR}" \
-            --timeout="$${CACHE_CLEANUP_TIME}" \
-            --hook="/run/control/src/cache-cleanup-hook.sh" \
-            --user="$${CONTAINER_USER}" \
-            --home="/home/$${CONTAINER_USER}" \
-            --tick="10" \
-            >/run/control/log/cache-cleanup-timer.stdout.log 2>&1 || true
 
 
 
           # ???
+
 
           echo done
 

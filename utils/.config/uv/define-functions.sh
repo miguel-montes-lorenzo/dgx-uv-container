@@ -64,7 +64,7 @@ __uv__pick_bin_for_pin() (
 # _uv_install_python
 # -------------------------
 _uv_install_python() (
-    __uv__strict
+  __uv__strict
 
   local allow_latest="${1:-}"
   if [[ "$allow_latest" == "true" ]]; then
@@ -346,21 +346,6 @@ venv() {
 
   _uv_install_python true || exit 1
 
-#   __venv__ensure_python() (
-#     __uv__strict
-
-#     if command -v _uv_install_python >/dev/null 2>&1; then
-#       _uv_install_python true
-#       return 0
-#     fi
-
-#     local shim_dir=""
-#     shim_dir="${HOME}/.local/uv-shims"
-#     if [[ -x "${shim_dir}/_uv_install_python" ]]; then
-#       "${shim_dir}/_uv_install_python" true
-#     fi
-#   )
-
   __venv__abs_path() (
     __uv__strict
 
@@ -378,7 +363,8 @@ venv() {
     local act="${1:?missing act}"
     local activate_path="${2:?missing activate_path}"
     local py="${3:-}"
-    shift 3
+    local explicit_name_passed="${4:?missing explicit_name_passed}"
+    shift 4
 
     [[ -f "$activate_path" ]] && return 0
 
@@ -387,11 +373,20 @@ venv() {
       cmd+=(--python "$py")
     fi
 
+    # Compute absolute path deterministically for display.
     local act_abs=""
-    act_abs="$(__venv__abs_path "$act")"
+    if [[ "$explicit_name_passed" == "1" ]]; then
+      act_abs="$(__venv__abs_path "$act")"
+    else
+      act_abs="$(__venv__abs_path ".venv")"
+    fi
 
     local uv_out=""
-    uv_out="$("${cmd[@]}" "$@" "$act" 2>&1 | sed '/^Activate with:/d')"
+    if [[ "$explicit_name_passed" == "1" ]]; then
+      uv_out="$("${cmd[@]}" "$@" "$act" 2>&1 | sed '/^Activate with:/d')"
+    else
+      uv_out="$("${cmd[@]}" "$@" 2>&1 | sed '/^Activate with:/d')"
+    fi
 
     if [[ -n "$uv_out" ]]; then
       printf '%s\n' "$uv_out" | sed -E \
@@ -409,11 +404,24 @@ venv() {
 
     [[ -f "$cfg" ]] || return 0
 
-    if grep -qE '^[[:space:]]*prompt[[:space:]]*=' "$cfg" 2>/dev/null; then
-      return 0
-    fi
-
-    printf 'prompt = %s\n' "$prompt_name" >>"$cfg"
+    local tmp="${cfg}.tmp.$$"
+    awk -v prompt_name="$prompt_name" '
+      BEGIN { found = 0 }
+      /^[[:space:]]*prompt[[:space:]]*=/ {
+        if (!found) {
+          print "prompt = " prompt_name
+          found = 1
+        }
+        next
+      }
+      { print }
+      END {
+        if (!found) {
+          print "prompt = " prompt_name
+        }
+      }
+    ' "$cfg" >"$tmp"
+    mv -f "$tmp" "$cfg"
   )
 
   __venv__remove_cfg_prompt() (
@@ -552,16 +560,17 @@ venv() {
 
   if [[ "$explicit_name_passed" == "0" ]]; then
     if [[ -f "$activate_path" ]]; then
-      # Activate in the current shell
+      __venv__strict __venv__ensure_cfg_prompt "$cfg_path" "$prompt_name" || true
+      export VIRTUAL_ENV_PROMPT="(${prompt_name}) "
       # shellcheck disable=SC1090
       source "${activate_path}"
-      export VIRTUAL_ENV_PROMPT="(${prompt_name}) "
       return 0
     fi
   fi
 
   if ! __venv__strict __venv__create_if_missing \
-    "$act" "$activate_path" "$py" "${clear_flag[@]}" "${extra_args[@]}"; then
+    "$act" "$activate_path" "$py" "$explicit_name_passed" \
+    "${clear_flag[@]}" "${extra_args[@]}"; then
     return 1
   fi
 
@@ -578,13 +587,12 @@ venv() {
 
   # Activate in the current shell
   # shellcheck disable=SC1090
-  source "${activate_path}"
-
   if [[ "$add_cfg_prompt" == "1" ]]; then
     export VIRTUAL_ENV_PROMPT="(${prompt_name}) "
   else
     export VIRTUAL_ENV_PROMPT="($(basename -- "$act")) "
   fi
+  source "${activate_path}"
 }
 
 
@@ -670,24 +678,63 @@ lpin() (
 gpin() (
   __uv__strict
 
-  if [[ $# -gt 0 ]]; then
-    uv python pin "$1" --global >/dev/null
-  fi
+  : "${XDG_CONFIG_HOME:=$HOME/.config}"
 
-  local c=""
-  for c in \
-    "${XDG_CONFIG_HOME:-$HOME/.config}/uv/.python-version" \
-    "$HOME/.uv/.python-version" \
+  local arg="${1-}"
+  local -a pin_files=(
+    "$XDG_CONFIG_HOME/uv/.python-version"
+    "$HOME/.uv/.python-version"
     "$HOME/.config/uv/python/version"
-  do
-    if [[ -f "$c" ]]; then
-      sed -n '1p' "$c"
+  )
+
+  _print() (
+    __uv__strict
+    local f=""
+    for f in "${pin_files[@]}"; do
+      [[ -f "$f" ]] || continue
+      sed -n '1p' "$f"
+      return 0
+    done
+    echo "(none)"
+    return 0
+  )
+
+  _rm_all() (
+    __uv__strict
+    rm -f -- "${pin_files[@]}"
+    return 0
+  )
+
+  if [[ -n "$arg" ]]; then
+    if [[ "$arg" == "none" ]]; then
+      _rm_all
+      _print
       exit 0
     fi
-  done
 
-  echo "(none)"
+    # Support pinning by interpreter path or by version/spec.
+    if [[ "$arg" == /* || "$arg" == ./* || "$arg" == ../* || -e "$arg" ]]; then
+      local p=""
+      if command -v realpath >/dev/null 2>&1; then
+        p="$(realpath -m -- "$arg" 2>/dev/null || true)"
+      fi
+      [[ -n "$p" ]] || p="$arg"
+      [[ -f "$p" && -x "$p" ]] || {
+        echo "[gpin] ERROR: not an executable interpreter path: $arg" >&2
+        exit 2
+      }
+      arg="$p"
+    fi
+
+    if ! uv python pin "$arg" --global >/dev/null; then
+      echo "[gpin] ERROR: uv could not pin: $arg" >&2
+      exit 1
+    fi
+  fi
+
+  _print
 )
+
 
 
 # -------------------------
@@ -702,11 +749,12 @@ interpreters() (
 
   _maybe_tmo() (
     __uv__strict
-
     local seconds="${1:?missing timeout}"
     shift
     if [[ -n "$timeout_bin" ]]; then
-      "$timeout_bin" "$seconds" "$@" 2>/dev/null
+      "$timeout_bin" "$seconds" "$@" 2>/dev/null \
+        || "$timeout_bin" "${seconds%s}" "$@" 2>/dev/null \
+        || true
     else
       "$@" 2>/dev/null
     fi
@@ -760,6 +808,8 @@ interpreters() (
     [[ -n "$real_norm" ]] || return 1
 
     # stdout: "<version>\t<resolved_executable_path>"
+    ver="${ver//$'\r'/}"
+    real_norm="${real_norm//$'\r'/}"
     printf '%s\t%s\n' "$ver" "$real_norm"
   )
 
@@ -824,7 +874,7 @@ PY
   local LIST_OK=0 OUT=""
   OUT="$(tmo2 uv --no-progress python list --only-installed || true)"
   if [[ -n "$OUT" ]]; then
-    while IFS= read -r line; do
+    while IFS= builtin read -r line; do
       [[ -n "$line" ]] || continue
 
       local a="" b="" p=""
@@ -843,10 +893,10 @@ PY
       rec="$(_probe_bin "$p" 2>/dev/null || true)"
       if [[ -n "$rec" ]]; then
         local ver="" real_norm=""
-        IFS=$'\t' read -r ver real_norm <<<"$rec"
+        IFS=$'\t' builtin read -r ver real_norm <<<"$rec"
         _add_if_new "$ver" "$real_norm"
       fi
-    done <<<"$OUT"
+    done <<<"$OUT" || true
     LIST_OK=1
   fi
 
@@ -859,37 +909,37 @@ PY
         [[ -n "$bin" ]] || continue
         rec="$(_probe_bin "$bin" 2>/dev/null || true)"
         [[ -n "$rec" ]] || continue
-        IFS=$'\t' read -r ver real_norm <<<"$rec"
+        IFS=$'\t' builtin read -r ver real_norm <<<"$rec"
         _add_if_new "$ver" "$real_norm"
       done
     else
       local cand="" bin="" rec="" ver="" real_norm=""
-      while IFS= read -r cand; do
+      while IFS= builtin read -r cand; do
         bin="$(command -v "$cand" 2>/dev/null || printf '')"
         [[ -n "$bin" ]] || continue
         rec="$(_probe_bin "$bin" 2>/dev/null || true)"
         [[ -n "$rec" ]] || continue
-        IFS=$'\t' read -r ver real_norm <<<"$rec"
+        IFS=$'\t' builtin read -r ver real_norm <<<"$rec"
         _add_if_new "$ver" "$real_norm"
       done < <(
         LC_ALL=C compgen -c \
           | grep -E '^python(3(\.[0-9]+)?)?$|^python3\.[0-9]+$' \
           | sort -u
-      )
+      ) || true
 
       if [[ "${UV_SHIMS_SKIP_UVDATA:-0}" != 1 ]]; then
         local _uv_data="" p="" rec="" ver="" real_norm=""
         _uv_data="${XDG_DATA_HOME:-$HOME/.local/share}/uv/python"
         if [[ -d "$_uv_data" ]]; then
-          while IFS= read -r p; do
+          while IFS= builtin read -r p; do
             rec="$(_probe_bin "$p" 2>/dev/null || true)"
             [[ -n "$rec" ]] || continue
-            IFS=$'\t' read -r ver real_norm <<<"$rec"
+            IFS=$'\t' builtin read -r ver real_norm <<<"$rec"
             _add_if_new "$ver" "$real_norm"
           done < <(
             find "$_uv_data" -type f -path '*/bin/python*' -executable 2>/dev/null \
               | sort -u
-          )
+          ) || true
         fi
       fi
     fi
@@ -937,9 +987,6 @@ PY
     printf "%s %s %s\n" "$mark" "${SHORTS[i]}" "${PATHS[i]}"
   done
 )
-
-
-
 
 
 
