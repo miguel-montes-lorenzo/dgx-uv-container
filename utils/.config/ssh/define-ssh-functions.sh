@@ -414,7 +414,7 @@ register_github_repo() (
       return 1
     }
     [[ ! -e "$repo_dir" ]] || {
-      printf 'error: target path already exists: %s\n' "$repo_dir" >&2
+      printf 'error: target path already exists: %s\n' "$start_dir/$repo_dir" >&2
       return 1
     }
 
@@ -723,7 +723,7 @@ register_github_repo() (
 # Per-repo hosts:
 # - github-repo-index lines are: <abs_repo_path> <hostname> <keyname>
 #
-# Behavior (UPDATED):
+# Behavior:
 # - Remove entries from github-repo-index whose repo path no longer exists OR
 #   whose key file ~/.ssh/<keyname> is missing.
 #   For each removed entry, also:
@@ -1116,14 +1116,13 @@ prune_github_credentials() (
       done <"$unref_hosts_removed"
     fi
   else
-    echo "Nothing to prune (github-repo-index has no invalid repo paths)."
+    echo "Repository index is consistent (no invalid repo paths or missing key references)."
   fi
 
   rm -f "$tmp_repo" "$tmp_cfg" "$invalid_keys" "$referenced_keys" \
         "$remove_hosts" "$removed_keys" "$unref_hosts_removed" \
         "$unref_keys_removed"
 )
-
 
 
 
@@ -1146,6 +1145,11 @@ prune_ssh_keys() (
 
   local tmp=""
   tmp="$(mktemp)"
+
+  # Track removals (private keys only)
+  local removed_tmp=""
+  removed_tmp="$(mktemp)"
+  : >"$removed_tmp"
 
   # 1) Format ~/.ssh/key-index:
   # - no more than one consecutive blank line
@@ -1223,6 +1227,7 @@ prune_ssh_keys() (
 
     if [[ -z "${declared[$base]+x}" ]]; then
       rm -f -- "$f" "$f.pub" >/dev/null 2>&1 || true
+      printf '%s\n' "$base" >>"$removed_tmp"
     fi
   done
 
@@ -1239,8 +1244,23 @@ prune_ssh_keys() (
   done
 
   chmod 600 "$key_index" >/dev/null 2>&1 || true
+
+  # Report removals (private keys only)
+  if [[ -s "$removed_tmp" ]]; then
+    sort -u "$removed_tmp" >/dev/null 2>&1 || true
+    echo "Pruned SSH keys (removed unlisted private keys from ~/.ssh):"
+    sort -u "$removed_tmp" | while IFS= read -r k || [[ -n "${k:-}" ]]; do
+      [[ -n "${k:-}" ]] || continue
+      printf -- "- %s\n" "$k"
+    done
+  else
+    echo "No SSH keys pruned (no unlisted private keys found)."
+  fi
+
+  rm -f "$removed_tmp" >/dev/null 2>&1 || true
   return 0
 )
+
 
 
 
