@@ -5,8 +5,9 @@ CONTAINER_USER="guest"
 # CONTROL
 COMPOSE_STATE_DIR="/run/control/var/compose-running"
 CLEANUP_TIMER_FILE="/run/control/var/cache-cleanup-time"
-CACHE_CLEANUP_TIME=60
-CACHE_CLEANUP_STRATEGY=2  # 0 -> None, 1 -> Pruning files/dirs unused for CACHE_CLEANUP_TIME, 2 -> If container inactive (no runing processes/commands) for CACHE_CLEANUP_TIME, then clean EVERYTHING in cache
+CACHE_CLEANUP_TIME=86400
+# 0 -> None, 1 -> Pruning files/dirs unused for CACHE_CLEANUP_TIME, 2 -> If container inactive (no runing processes/commands) for CACHE_CLEANUP_TIME, then clean EVERYTHING in cache
+CACHE_CLEANUP_STRATEGY=1
 
 # UV
 PERSISTENT_UV_CACHE=false

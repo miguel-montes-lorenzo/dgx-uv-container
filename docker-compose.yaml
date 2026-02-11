@@ -10,7 +10,6 @@ services:
         UID: ${HOST_UID}
         GID: ${HOST_GID}
         USERNAME: "${CONTAINER_USER}"
-    networks: [alumnos]
 
     labels:
       - >-
@@ -177,7 +176,3 @@ services:
 
           printf '%s\n' false > "$${COMPOSE_STATE_DIR}"
           exec su -s /bin/bash ${CONTAINER_USER} -c "sleep infinity"
-
-networks:
-  alumnos:
-    external: true
