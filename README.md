@@ -52,41 +52,98 @@ Stop the compose and remove the container:
 down
 ```
 
+---
+
+To attach to the container via VSCode
+
+Start the compose (single container named: `${USER}-session`):
+
+```bash
+up
+```
+
+Open a new VSCode window if no VSCode window is currently open on the system where the container was launched.
+
+Press **Ctrl + Shift + P** to open the command palette.
+
+Type and select:
+
+```
+Dev Containers: Attach to Running Container
+```
+
+Choose the running container with the name corresponding to your compose session (`${USER}-session`).
+
+VSCode will open a new window attached to the container environment, allowing you to work inside the container using the integrated terminal, editor, and extensions.
+
+
+
 
 ## Features
-- Ubuntu-based image suitable for DGX environments
-- `uv` preinstalled and ready to use
-- Persistent `uv` cache via volume mounting to speed up repeated builds
-- Automatic `uv` cache pruning at startup to remove unused dependencies without requiring user intervention
-- Custom shims to simplify `uv` usage and environment management
-- Persistent working directory mounted at ~/data
-- Persistent ~/.ssh directory for SSH configuration and keys, useful for repository-specific deploy keys and seamless Git access
-- Preinstalled set of commonly used development and system tools, including:
-  - bash
-  - ca-certificates
-  - curl
-  - git
-  - openssh-client
-  - sudo
-  - tmux
-  - tree
-  - build-essential
-  - libgmp-dev
-  - libcdd-dev
-  - micro
+* Ubuntu-based image suitable for DGX environments
+* Persistent working directory mounted at ~/data
+* Persistent ~/.ssh directory for SSH configuration and keys, useful for repository-specific deploy keys and seamless Git access
+* Persistent ~/.cache directory (mounted from the host) to preserve tool caches across container restarts (e.g., pip/uv metadata, editor caches, and other user-level cache state)
+* `uv` preinstalled and ready to use
+* Persistent `uv` cache via volume mounting to speed up repeated builds
+* Automatic `uv` cache pruning at startup to remove unused dependencies without requiring user intervention
+* Configurable cache cleanup strategies (controlled by `CACHE_CLEANUP_STRATEGY`) to manage persistent `~/.cache` storage over time
+* Custom helper functions to simplify `uv` usage and environment management
+* GitHub SSH helpers to generate per-repository deploy keys, register repositories with repo-specific SSH host aliases, and prune stale SSH configuration safely
+* Preinstalled set of commonly used development and system tools, including:
 
+  * bash
+  * ca-certificates
+  * curl
+  * git
+  * openssh-client
+  * sudo
+  * tmux
+  * tree
+  * gawk
+  * build-essential
+  * libgmp-dev
+  * libcdd-dev
+  * micro
 
 ## Configuration variables (`variables.sh`)
 
-The behavior of the container and its persistence model is controlled via `variables.sh`:
-- **`PROJECT`**: Docker Compose project name. Controls container isolation and naming.
-- **`CONTAINER_USER`**: User created and used inside the container (home directory, file ownership, attach user).
-- **`HOST_VOLUME_DIR`**: Base directory on the host mounted into the container. All persistent data lives under this path.
-- **`WORKDIR_HOST`**: Host directory mapped to `~/data` inside the container.
-- **`SSH_HOST`**: Host directory mapped to `~/.ssh` for persistent SSH keys and config.
-- **`UV_CACHE_HOST`**: Host directory used to persist the `uv` cache.
+The behavior of the container and its persistence model is controlled via `variables.sh`.
 
-These variables define the container’s user, persistence layout, and session isolation.
+**Docker**
+
+* **`COMPOSE_PROJECT_NAME`**: Docker Compose project name. This is derived dynamically from your `${USER}` and the current directory name, ensuring sessions are isolated per user and per project directory.
+* **`CONTAINER_USER`**: Linux user created and used inside the container (`/home/<user>`, file ownership, and default user when attaching).
+
+**Control (cache cleanup)**
+
+* **`COMPOSE_STATE_DIR`**: A state file path used by the container startup logic to record whether the compose session is still initializing.
+* **`CLEANUP_TIMER_FILE`**: State file used by the cleanup timer to store timing/countdown information (and a corresponding `.lock` file is used for `flock`).
+* **`CACHE_CLEANUP_TIME`**: Cleanup horizon in seconds. Interpreted as:
+
+  * strategy 1: "stale" threshold (files not accessed in the last `CACHE_CLEANUP_TIME` seconds may be deleted)
+  * strategy 2: idle timeout (after `CACHE_CLEANUP_TIME` seconds without interactive foreground activity, clear cache)
+* **`CACHE_CLEANUP_STRATEGY`**: Cache cleanup strategy selector:
+
+  * `0`: no cleanup
+  * `1`: periodic stale cleanup under `~/.cache` (delete files whose access time is older than `CACHE_CLEANUP_TIME`)
+  * `2`: idle-triggered full cleanup under `~/.cache` (delete everything inside the cache directory when idle for `CACHE_CLEANUP_TIME`)
+
+**uv**
+
+* **`PERSISTENT_UV_CACHE`**: If `true`, the `uv` cache is stored on the mounted host volume (`/mnt/workdata/<UV_CACHE_SUBDIR>`) and reused across restarts.
+
+**Host paths / persistent volume layout**
+All persistent data is stored under `HOST_VOLUME_PATH` on the host and mounted into the container at `/mnt/workdata/`.
+
+* **`HOST_VOLUME_PATH`**: Host base directory used for persistence.
+* **`DATA_SUBDIR`**: Subdirectory mapped to `~/data` inside the container (your persistent working directory).
+* **`SSH_SUBDIR`**: Subdirectory mapped to `~/.ssh` inside the container (persistent SSH keys, config, known_hosts).
+* **`UV_CACHE_SUBDIR`**: Subdirectory used as the persistent `uv` cache directory (`UV_CACHE_DIR`).
+* **`CACHE_SUBDIR`**: Subdirectory mapped to `~/.cache` inside the container (persistent cache directory used by tooling and by the cleanup strategies).
+
+These variables define the container's user, persistence layout, session isolation, and background cleanup behavior.
+
 
 
 ## UV helpers (shell functions)
