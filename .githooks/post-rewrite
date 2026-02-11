@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Only act on rebase rewrites.
+case "${1:-}" in
+  rebase) ;;
+  *) exit 0 ;;
+esac
+
+exec "$(git rev-parse --show-toplevel)/.githooks/persistent-uv-cache-toggle.sh" protect
