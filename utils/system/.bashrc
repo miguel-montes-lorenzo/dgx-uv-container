@@ -182,7 +182,7 @@ DISPLAY_INFO_AT_STARTUP=false
 
 # Define ssh functions
 source "${HOME}/.config/ssh/define-ssh-functions.sh"
-prune-github-credentials >/dev/null 2>&1 || true
+prune_ssh >/dev/null 2>&1 || true
 
 
 
