@@ -89,176 +89,193 @@ The behavior of the container and its persistence model is controlled via `varia
 These variables define the container’s user, persistence layout, and session isolation.
 
 
-## UV shims (command wrappers)
+## UV helpers (shell functions)
 
-This project installs small command wrappers (“shims”) into `~/.local/uv-shims` and prepends that directory to `PATH`. They are designed to make `uv` behave like a drop-in replacement for standard Python tooling, while consistently respecting pins and virtual environments.
+This project exposes a small set of shell helpers (added to `PATH`) to make common `uv` workflows feel like standard Python tooling, while respecting pins and virtual environments.
 
 ### `python`
 
-Runs Python via `uv run`, explicitly binding execution to the interpreter resolved by `uv`. This avoids ambiguity between system Pythons, uv-managed interpreters, and active pins. If the project requires a pinned Python version that is not installed, it may prompt to install it interactively.
-
-
+Runs Python in the current context via `uv run` (honors pins / active project settings). If the project requires a pinned Python that is not installed, it may prompt to install it.
 
 ### `pip`
 
-Thin wrapper around `uv pip`, always operating on an explicitly selected interpreter.
+`pip`-like interface backed by `uv pip`.
 
-* `-p, --python <path|version>`: select the interpreter explicitly
-* if not provided, the interpreter resolved by `uv run python` is used
-
-
+* `-p, --python <path|version>`: pick the interpreter explicitly
+* otherwise, uses the interpreter resolved for `uv run`
 
 ### `version`
 
-Prints two lines: the `uv` version and the Python version. Python resolution follows this order: active virtual environment, `uv run` (with downloads disabled), system fallback, or `Python (none)` if nothing is available.
-
-
+Prints the `uv` version and the active Python version (prefers the current venv if one is active).
 
 ### `venv`
 
-Shell function to create and/or activate a virtual environment in the current directory (default: `.venv`). If a venv already exists, it is simply activated; if you are already inside a venv, it refuses to nest. The prompt is adjusted to match `uv venv` behavior.
+Create and/or activate a venv (default: `.venv`) in the current directory.
 
-* `venv <dir>`: use a custom venv directory instead of `.venv`
-* `-p, --python <path|version>`: select the interpreter for venv creation
-
-
+* `venv`: create `.venv` if missing, otherwise just activate it
+* `venv <dir>`: create/replace and activate a venv at `<dir>`
+* `-p, --python <path|version>`: choose interpreter for venv creation
+* refuses to run if you are already inside a venv
 
 ### `lpin`
 
-Shows or manages the **local** Python pin (`.python-version`) by walking up the directory tree.
+Show or set a local Python pin (`.python-version`) by walking up the directory tree.
 
-* `lpin`:
-
-  * prints `<version>` if pinned in the current directory
-  * prints `(~path) <version>` if inherited from a parent
-  * prints `(none)` if no local pin exists
-* `lpin <path|version>`: set or update the local pin
-
-
+* `lpin`: show the nearest pin (`(none)` if there is none)
+* `lpin <path|version>`: set the local pin in the current directory
+* `lpin none`: remove the nearest pin found in the parent chain
 
 ### `gpin`
 
-Shows or manages the **global** Python pin.
+Show or set the global Python pin.
 
-* `gpin`: prints the global pin or `(none)`
-* `gpin <path|version>`: set the global pin
-* `gpin none`: remove the global pin
-
-
+* `gpin`: show global pin (`(none)` if unset)
+* `gpin <path|version>`: set global pin
+* `gpin none`: remove global pin
 
 ### `interpreters`
 
-Lists all detected Python interpreters at patch level (`cpython-X.Y.Z <path>`), marking one with `*`. Preference order is: current interpreter resolved by `uv run`, exact pinned version, highest patch of a pinned minor version.
+List detected Python interpreters (`cpython-X.Y.Z <path>`), marking the one currently used by `uv run` with `*`.
 
-Environment knobs are available to tune scanning behavior (`UV_SHIMS_SCAN_MNT`, `UV_SHIMS_FAST`, `UV_SHIMS_SKIP_UVDATA`).
-
-
+Environment knobs: `UV_SHIMS_SCAN_MNT`, `UV_SHIMS_FAST`, `UV_SHIMS_SKIP_UVDATA`.
 
 ### `uncache`
 
-Garbage-collects the `uv` cache without assuming a fixed project layout.
+Garbage-collect the `uv` cache (archives, wheels, and `.rkyv` metadata), deleting entries that are not referenced by any installed environments. Set `UV_SHIMS_DEBUG=1` for verbose output.
 
-Archive objects are removed when all contained files have a single hard link (`nlink == 1`). For cached wheels, only projects that are actually installed in **UV-managed virtual environments** are kept. Candidate projects are discovered under `~`, but only directories containing an exact `<dir>/.venv/pyvenv.cfg` are considered (no recursive project scanning).
+### `environments`
 
-Uses `UV_CACHE_DIR` if set, otherwise defaults to `~/.cache/uv`. Debug output can be enabled by setting `DEBUG=1` inside the script.
+Find and list Python virtual environments under a root directory (default: `~`). Marks likely uv-managed envs with `[uv]`.
 
-
+* `UV_ENVS_ROOT`: scan root
+* `UV_ENVS_WORKERS`: parallelism
 
 ### `lock`
 
-Exports dependencies from the active virtual environment into `pyproject.toml` and generates `uv.lock`. Requires `VIRTUAL_ENV` to be set.
+Sync dependencies into `pyproject.toml` from the active environment (or from source imports), then run `uv lock`. Optionally emits a pinned `requirements.txt`.
 
-* `--deps=env` (default): infer dependencies from installed distributions
-* `--deps=src` / `-s`: infer dependencies by scanning Python imports in source files
-* `--txt` / `-t`: additionally write a pinned `requirements.txt`
+* default: infer deps from the active env
+* `--src` / `-s`: infer deps by scanning imports
+* `--txt` / `-t`: also write `requirements.txt`
 
-CUDA-related dependencies (names containing `nvidia` or `cuda`) are automatically placed under the optional dependency group `cuda`.
 
 
 ## How to manage SSH GitHub credentials
 
 This container supports persistent SSH configuration via the `~/.ssh` volume and includes helper functions to create and manage repository-specific GitHub deploy keys.
 
-Each private repository can have its own deploy key, while SSH still connects to the same host (`github.com`). The mechanism is: the container adds the generated key as an `IdentityFile` under the `Host github.com` block in `~/.ssh/config`, and keeps a local index mapping repositories to key names in `~/.ssh/github-repo-index`. This allows `prune-github-credentials` to remove unused keys safely.
+Each repository uses its own SSH host alias instead of sharing a single `Host github.com` entry. The function writes a dedicated block to `~/.ssh/config`:
 
-**If the repository must be cloned from GitHub**
+* `Host <generated-hostname>`
+* `HostName github.com`
+* `IdentityFile ~/.ssh/<keyname>`
+* `IdentitiesOnly yes`
 
-From the directory where you want the repository to be cloned, run `register-github-repo` with `--remote`:
+It also records an entry in `~/.ssh/github-repo-index`:
+
+```
+<abs_repo_path> <hostname> <keyname>
+```
+
+This index allows `prune-github-credentials` to safely remove stale configuration. The SSH config file is also normalized so it never contains more than one consecutive blank line.
+
+---
+
+**Registering the current local repository (no flags)**
+
+From inside an existing Git repository:
+
+```bash
+register-github-repo
+```
+
+This will:
+
+* Generate a new deploy key.
+* Create or update a repo-specific `Host github-<...>` block in `~/.ssh/config`.
+* Append `<abs_repo_path> <hostname> <keyname>` to `~/.ssh/github-repo-index`.
+* Rewrite `origin` to the SSH host-alias form
+  (`git@github-<...>:<owner>/<repo>.git`).
+* Print the public key to add to GitHub:
+
+```bash
+Include the following public key in your GitHub repository (Settings → Deploy keys → Add deploy key).
+> PUBLIC KEY: ssh-ed25519 AAAA... deploy-key-repo_<10-digit-id>
+```
+
+After adding the key in GitHub, normal `git fetch/pull/push` operations will work transparently through SSH.
+
+---
+
+**Registering the current local repository with an existing key (`--key`)**
+
+If a private key already exists under `~/.ssh/<keyname>`:
+
+```bash
+register-github-repo --key=<keyname>
+```
+
+This will:
+
+* Reuse the existing key (no new key is generated).
+* Create/update the repo-specific `Host` block.
+* Record the repo in `~/.ssh/github-repo-index`.
+* Rewrite `origin` to the host-alias SSH form.
+
+No public key is printed, since the key is assumed to already be installed in GitHub.
+
+---
+
+**Cloning a repository from GitHub (`--remote`)**
+
+From the directory where the repository should be created:
 
 ```bash
 register-github-repo --remote=git@github.com:<github-username>/<repo-name>.git
 ```
 
-This will generate a new deploy key, add it as an `IdentityFile` under the `Host github.com` entry in `~/.ssh/config`, and print the public key you must add to the GitHub repository:
+This will:
+
+* Generate a new deploy key.
+* Create/update a repo-specific `Host github-<...>` block.
+* Print the public key and the GitHub deploy-key settings URL:
 
 ```bash
-Output:
-
-Generating public/private ed25519 key pair.
-Your identification has been saved in /home/guest/.ssh/id_ed25519_repo_7892722528
-Your public key has been saved in /home/guest/.ssh/id_ed25519_repo_7892722528.pub
-The key fingerprint is:
-SHA256:kF4Q9j9Jw7+Clt8hS5zE/tZQHcLpaiGchrRTFrVcVdY deploy-key-repo_7892722528
-The key's randomart image is:
-+--[ED25519 256]--+
-|      +. .o...o.=|
-|     . = +. o+ oE|
-|      + O =o. ...|
-|     . * O = .. .|
-|      . S B +.   |
-|         * =..   |
-|        + O oo   |
-|       . o *...  |
-|          o.o    |
-+----[SHA256]-----+
 Include the following public key in your GitHub repository (Settings → Deploy keys → Add deploy key).
 > ENDPOINT: https://github.com/<github-username>/<repo-name>/settings/keys
-> PUBLIC KEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDzb6UYyc0qxw+VxWDJDHDPdeZ0mGjshoaZqP6wRD3X2 deploy-key-repo_7892722528
+> PUBLIC KEY: ssh-ed25519 AAAA... deploy-key-repo_<10-digit-id>
 Continue with cloning [y/n]?
 ```
 
-Open the `ENDPOINT` URL, add the shown `PUBLIC KEY` under “Deploy keys”, and then type `y` to continue. The function will retry cloning until it succeeds (useful if you just added the key and GitHub hasn’t propagated it yet):
-
-```bash
-Output:
-
-Cloning into '<repo-name>'...
-remote: Enumerating objects: 186, done.
-remote: Counting objects: 100% (186/186), done.
-remote: Compressing objects: 100% (136/136), done.
-remote: Total 186 (delta 36), reused 181 (delta 31), pack-reused 0 (from 0)
-Receiving objects: 100% (186/186), 311.15 KiB | 1.09 MiB/s, done.
-Resolving deltas: 100% (36/36), done.
-Repository registered in ssh config.
-```
-
-After this, the repository is already configured: future `git fetch/pull/push` will use SSH and the generated deploy key transparently.
+After confirming with `y`, the function clones using the host alias
+(`git@github-<...>:<owner>/<repo>.git`).
+If cloning fails, it keeps prompting to retry, which is useful immediately after adding the deploy key.
+On success, the repository is recorded in `~/.ssh/github-repo-index`.
 
 ---
 
-**If the repository already exists locally (e.g., public repos cloned via HTTPS)**
+**Cloning with an existing key (`--remote --key`)**
 
-Change directory into the local repository and register it to use a repository-specific deploy key:
-
-```bash
-cd <repo-name>
-register-github-repo
-```
-
-This will generate a new deploy key, add it as an `IdentityFile` under the `Host github.com` entry in `~/.ssh/config`, and print the public key to be added to GitHub:
+To reuse an existing private key:
 
 ```bash
-Output:
-
-[...]
-Include the following public key in your GitHub repository (Settings → Deploy keys → Add deploy key).
-> PUBLIC KEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZUiEhN+93/ilUL0o/ran7lfCJWlF46kHnEnPonFU5+ deploy-key-repo_7281203282
-Repository registered in ssh config.
+register-github-repo \
+  --remote=git@github.com:<github-username>/<repo-name>.git \
+  --key=<keyname>
 ```
 
-Add the key in GitHub (Repository → Settings → Deploy keys → Add deploy key). From that point on, Git operations in this repository will use SSH with the generated deploy key. If your `origin` was previously HTTPS, `register-github-repo` will switch it to the SSH form automatically.
+This will:
+
+* Verify the key can access the repository (`git ls-remote` with that key).
+* Create/update the repo-specific `Host` block.
+* Clone using the host alias.
+* Register the repo in `~/.ssh/github-repo-index`.
+
+No new key is generated.
+
+---
 
 Notes:
 
-* Deploy keys are scoped to a single repository. This is generally safer than reusing one key across multiple repos.
-* If you later delete a repository directory, you can run `prune-github-credentials` to remove unreferenced keys and keep `~/.ssh` tidy.
+* Deploy keys are scoped to a single repository, which is safer than sharing keys.
+* If a repository directory is later removed, running `prune-github-credentials` cleans up unused SSH config entries and keys.
