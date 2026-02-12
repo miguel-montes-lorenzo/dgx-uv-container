@@ -75,6 +75,8 @@ services:
 
           rm -f $$HOME/.bashrc
           cp /mnt/utils/system/.bashrc $$HOME/.bashrc
+          rm -f $$HOME/.inputrc
+          cp /mnt/utils/system/.inputrc $$HOME/.inputrc
           cp /mnt/utils/system/bash.bashrc /etc/bash.bashrc
           rm -rf $$HOME/.config
           mkdir -p $$HOME/.config
