@@ -23,6 +23,7 @@ RUN apt-get update \
         libcdd-dev \
         micro \
         gawk \
+        iproute2 \
         gnupg \
         lsb-release \
     && rm -rf /var/lib/apt/lists/*
