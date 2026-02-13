@@ -29,6 +29,7 @@ services:
         }]
 
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - ${HOST_VOLUME_PATH}:/mnt/workdata/
       - ./utils/:/mnt/utils/
 
@@ -99,6 +100,17 @@ services:
           chown -R ${HOST_UID}:${HOST_GID} $$HOME || true
           chmod 700 /mnt/workdata/${SSH_SUBDIR}
           chmod 600 /mnt/workdata/${SSH_SUBDIR}/* 2>/dev/null || true
+
+
+          # MAKE DOCKER USABLE INSIDE THE CONTAINER
+
+          if [ -S /var/run/docker.sock ]; then
+            DOCKER_SOCK_GID="$(stat -c '%g' /var/run/docker.sock)"
+            if ! getent group "$${DOCKER_SOCK_GID}" >/dev/null; then
+              groupadd -g "$${DOCKER_SOCK_GID}" docker-host || true
+            fi
+            usermod -aG "$${DOCKER_SOCK_GID}" "${CONTAINER_USER}" || true
+          fi
 
 
           # SET UP UV

@@ -143,6 +143,9 @@ fi
 chmod +x "$HOME/.config/uv/uv-cache-dependency-clean.sh"
 
 # aliases
+alias up="chmod +x up.sh && ./up.sh"
+alias attach="chmod +x attach.sh && ./attach.sh"
+alias down="chmod +x down.sh && ./down.sh"
 alias py="python"
 alias cls="clear"
 alias storage="du -hc --max-depth=0 /home/${USER}/.local/share/uv/python/ /home/${USER}/.local/share/uv/tools/ /home/${USER}/.cache/ /mnt/workdata/uv_cache/ /mnt/workdata/data/"
