@@ -10,6 +10,7 @@ services:
         UID: ${HOST_UID}
         GID: ${HOST_GID}
         USERNAME: "${CONTAINER_USER}"
+        INSTALL_DOCKER: "${INSTALL_DOCKER}"
 
     labels:
       - >-
