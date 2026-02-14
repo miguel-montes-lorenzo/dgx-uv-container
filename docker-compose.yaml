@@ -103,17 +103,6 @@ services:
           chmod 600 /mnt/workdata/${SSH_SUBDIR}/* 2>/dev/null || true
 
 
-          # MAKE DOCKER USABLE INSIDE THE CONTAINER
-
-          if [ -S /var/run/docker.sock ]; then
-            DOCKER_SOCK_GID="$(stat -c '%g' /var/run/docker.sock)"
-            if ! getent group "$${DOCKER_SOCK_GID}" >/dev/null; then
-              groupadd -g "$${DOCKER_SOCK_GID}" docker-host || true
-            fi
-            usermod -aG "$${DOCKER_SOCK_GID}" "${CONTAINER_USER}" || true
-          fi
-
-
           # SET UP UV
 
           su - "${CONTAINER_USER}" -s /bin/bash -c '
@@ -180,6 +169,57 @@ services:
               echo "Invalid CACHE_CLEANUP_STRATEGY='$${CACHE_CLEANUP_STRATEGY}'" >&2
               ;;
           esac
+
+
+          # MAKE DOCKER USABLE INSIDE THE CONTAINER
+
+          # 1) Ensure the user can talk to the host docker socket
+          if [ -S /var/run/docker.sock ]; then
+            DOCKER_SOCK_GID="$(stat -c '%g' /var/run/docker.sock)"
+            if ! getent group "$${DOCKER_SOCK_GID}" >/dev/null; then
+              groupadd -g "$${DOCKER_SOCK_GID}" docker-host 2>/dev/null || true
+            fi
+            usermod -aG "$${DOCKER_SOCK_GID}" "${CONTAINER_USER}" 2>/dev/null || true
+          
+            # 2) Pin Docker client state (HOME/DOCKER_CONFIG) for the *user* so buildx stays stable
+            printf '%s\n' \
+              'export HOME="/home/'"${CONTAINER_USER}"'"' \
+              'export USER="'"${CONTAINER_USER}"'"' \
+              'export DOCKER_CONFIG="/home/'"${CONTAINER_USER}"'/.docker"' \
+              > /etc/profile.d/docker-env.sh
+
+            chmod 644 /etc/profile.d/docker-env.sh
+            mkdir -p "/home/${CONTAINER_USER}/.docker"
+            chown -R "${HOST_UID}:${HOST_GID}" "/home/${CONTAINER_USER}/.docker" 2>/dev/null || true
+            chmod 700 "/home/${CONTAINER_USER}/.docker" 2>/dev/null || true
+            # 3) If docker CLI is installed in the image, create/use ONE builder (daemon cache)
+            if [ "${INSTALL_DOCKER}" = "true" ]; then
+              export DOCKER_BUILDKIT=1
+              export COMPOSE_DOCKER_CLI_BUILD=1
+
+              sudo -u "${CONTAINER_USER}" -E bash -lc '
+                set -Eeuo pipefail
+                docker buildx create --name session --driver docker --use >/dev/null 2>&1 || true
+                docker buildx use session >/dev/null 2>&1 || true
+              '
+            fi
+            printf '%s\n' \
+              '#!/usr/bin/env bash' \
+              'set -Eeuo pipefail' \
+              ': "${CONTAINER_USER:?CONTAINER_USER is required}"' \
+              '' \
+              'export HOME="/home/${CONTAINER_USER}"' \
+              'export USER="${CONTAINER_USER}"' \
+              'export DOCKER_CONFIG="/home/${CONTAINER_USER}/.docker"' \
+              '' \
+              'if [ "$(id -u)" -eq 0 ]; then' \
+              '  exec sudo -u "${CONTAINER_USER}" -E docker compose "$@"' \
+              'fi' \
+              'exec docker compose "$@"' \
+              > /usr/local/bin/dc
+
+            chmod 755 /usr/local/bin/dc
+          fi
 
 
           # KEEP THE CONTAINER ALIVE

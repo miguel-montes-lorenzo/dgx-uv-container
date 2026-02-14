@@ -25,29 +25,7 @@ RUN apt-get update \
         micro \
         gawk \
         iproute2 \
-        gnupg \
-        lsb-release \
     && rm -rf /var/lib/apt/lists/*
-
-# # install docker dependencies
-# RUN apt-get install -y --no-install-recommends \
-#         gnupg \
-#         lsb-release \
-#     && rm -rf /var/lib/apt/lists/* \
-#     && set -eux; \
-#     install -m 0755 -d /etc/apt/keyrings; \
-#     curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-#       | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; \
-#     chmod a+r /etc/apt/keyrings/docker.gpg; \
-#     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-#       https://download.docker.com/linux/ubuntu \
-#       $(. /etc/os-release && echo ${VERSION_CODENAME}) stable" \
-#       > /etc/apt/sources.list.d/docker.list; \
-#     apt-get update; \
-#     apt-get install -y --no-install-recommends \
-#       docker-ce-cli docker-buildx-plugin docker-compose-plugin; \
-#     rm -rf /var/lib/apt/lists/*
-
 
 # install docker dependencies only if requested
 RUN set -eux; \
@@ -71,7 +49,6 @@ RUN set -eux; \
         rm -rf /var/lib/apt/lists/*; \
     fi
 
-
 # Create user/group with requested UID/GID, reusing existing GID if needed
 RUN set -eux; \
     if getent group "${GID}" >/dev/null; then \
@@ -89,7 +66,10 @@ RUN set -eux; \
 RUN mkdir -p "/home/${USERNAME}/.ssh" "/home/${USERNAME}/.config" "/home/${USERNAME}/.cache" \
     && chmod 700 "/home/${USERNAME}/.ssh" \
     && chown -R "${UID}:${GID}" "/home/${USERNAME}"
+    
+ENV DOCKER_CONFIG="/home/${USERNAME}/.docker"
 
 USER ${USERNAME}
+
 
 CMD ["bash", "-lc", "sleep infinity"]
